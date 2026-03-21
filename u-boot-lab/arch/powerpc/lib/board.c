@@ -713,7 +713,7 @@ void board_init_r(gd_t *id, ulong dest_addr)
 	/*
 	 * Initialise the ISA bridge
 	 */
-	initialise_w83c553f();
+	/* initialise_w83c553f(); */
 #endif
 
 	asm("sync ; isync");
@@ -750,8 +750,7 @@ void board_init_r(gd_t *id, ulong dest_addr)
 		print_size(flash_size, "\n");
 #endif /* CONFIG_SYS_FLASH_CHECKSUM */
 	} else {
-		puts(failed);
-		hang();
+		puts(failed); puts("DBG: continue after flash_init fail\n");
 	}
 
 	/* update start of FLASH memory    */
@@ -805,8 +804,7 @@ void board_init_r(gd_t *id, ulong dest_addr)
 #endif
 
 	/* relocate environment function pointers etc. */
-	env_relocate();
-
+    env_relocate(); puts("DBG: after env_relocate");
 	/*
 	 * after non-volatile devices & environment is setup and cpu code have
 	 * another round to deal with any initialization that might require
@@ -888,10 +886,11 @@ void board_init_r(gd_t *id, ulong dest_addr)
 
 /** leave this here (after malloc(), environment and PCI are working) **/
 	/* Initialize stdio devices */
-	stdio_init();
-
+    puts("DBG: before stdio_init");
+	stdio_init(); puts("DBG: after stdio_init");
 	/* Initialize the jump table for applications */
-	jumptable_init();
+    puts("DBG: before jumptable_init");
+	jumptable_init(); puts("DBG: after jumptable_init");
 
 #if defined(CONFIG_API)
 	/* Initialize API */
@@ -899,7 +898,8 @@ void board_init_r(gd_t *id, ulong dest_addr)
 #endif
 
 	/* Initialize the console (after the relocation and devices init) */
-	console_init_r();
+    puts("DBG: before console_init_r");
+	console_init_r(); puts("DBG: after console_init_r");
 
 #if defined(CONFIG_MISC_INIT_R)
 	/* miscellaneous platform dependent initialisations */
