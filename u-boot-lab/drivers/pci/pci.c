@@ -639,18 +639,21 @@ int pci_hose_scan_bus(struct pci_controller *hose, int bus)
 		if (PCI_FUNC(dev) && !found_multi)
 			continue;
 
-		pci_hose_read_config_byte(hose, dev, PCI_HEADER_TYPE, &header_type);
+		printf("DBG: PCI probe %02x:%02x.%x vendor\n",
+		       PCI_BUS(dev), PCI_DEV(dev), PCI_FUNC(dev));
 
 		pci_hose_read_config_word(hose, dev, PCI_VENDOR_ID, &vendor);
 
 		if (vendor == 0xffff || vendor == 0x0000)
 			continue;
 
+		pci_hose_read_config_byte(hose, dev, PCI_HEADER_TYPE, &header_type);
+
 		if (!PCI_FUNC(dev))
 			found_multi = header_type & 0x80;
 
-		debug ("PCI Scan: Found Bus %d, Device %d, Function %d\n",
-			PCI_BUS(dev), PCI_DEV(dev), PCI_FUNC(dev) );
+		printf("DBG: PCI found %02x:%02x.%x vendor=%04x\n",
+		       PCI_BUS(dev), PCI_DEV(dev), PCI_FUNC(dev), vendor);
 
 		pci_hose_read_config_word(hose, dev, PCI_DEVICE_ID, &device);
 		pci_hose_read_config_word(hose, dev, PCI_CLASS_DEVICE, &class);

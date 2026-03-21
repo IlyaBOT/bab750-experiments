@@ -501,7 +501,8 @@ int do_env_edit(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
  */
 char *getenv(const char *name)
 {
-	if (gd->flags & GD_FLG_ENV_READY) { /* after import into hashtable */
+	if ((gd->flags & GD_FLG_ENV_READY) && env_htab.table && env_htab.size) {
+		/* After import into hash table. */
 		ENTRY e, *ep;
 
 		WATCHDOG_RESET();
@@ -513,7 +514,7 @@ char *getenv(const char *name)
 		return ep ? ep->data : NULL;
 	}
 
-	/* restricted capabilities before import */
+	/* Restricted capabilities before import, or after a failed import. */
 	if (getenv_f(name, (char *)(gd->env_buf), sizeof(gd->env_buf)) > 0)
 		return (char *)(gd->env_buf);
 

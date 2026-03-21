@@ -651,7 +651,7 @@ int himport_r(struct hsearch_data *htab,
 
 	/* we allocate new space to make sure we can write to the array */
 	if ((data = malloc(size)) == NULL) {
-		debug("himport_r: can't malloc %zu bytes\n", size);
+		printf("himport_r: can't malloc %zu bytes\n", size);
 		__set_errno(ENOMEM);
 		return 0;
 	}
@@ -693,6 +693,8 @@ int himport_r(struct hsearch_data *htab,
 		debug("Create Hash Table: N=%d\n", nent);
 
 		if (hcreate_r(nent, htab) == 0) {
+			printf("himport_r: hcreate_r(%d) failed, errno=%d\n",
+				nent, errno);
 			free(data);
 			return 0;
 		}

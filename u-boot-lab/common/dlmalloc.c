@@ -1521,11 +1521,23 @@ void *sbrk(ptrdiff_t increment)
 
 void mem_malloc_init(ulong start, ulong size)
 {
+	int i;
+	mbinptr bin;
+
 	mem_malloc_start = start;
 	mem_malloc_end = start + size;
 	mem_malloc_brk = start;
 
 	memset((void *)mem_malloc_start, 0, size);
+
+	/* Rebuild dlmalloc's self-referential bin headers after relocation. */
+	av_[0] = 0;
+	av_[1] = 0;
+	for (i = 0; i < NAV; ++i) {
+		bin = bin_at(i);
+		bin->fd = bin;
+		bin->bk = bin;
+	}
 }
 
 /* field-extraction macros */

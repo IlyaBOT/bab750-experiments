@@ -719,6 +719,15 @@ void board_init_r(gd_t *id, ulong dest_addr)
 	asm("sync ; isync");
 
 	mem_malloc_init(malloc_start, TOTAL_MALLOC_LEN);
+	printf("DBG: malloc arena start=%08lx size=%08lx\n",
+	       malloc_start, (ulong)TOTAL_MALLOC_LEN);
+	{
+		void *dbg_malloc = malloc(64);
+		printf("DBG: malloc pre-flash %s %p\n",
+		       dbg_malloc ? "ok" : "fail", dbg_malloc);
+		if (dbg_malloc)
+			free(dbg_malloc);
+	}
 
 #if !defined(CONFIG_SYS_NO_FLASH)
 	puts("Flash: ");
@@ -751,6 +760,14 @@ void board_init_r(gd_t *id, ulong dest_addr)
 #endif /* CONFIG_SYS_FLASH_CHECKSUM */
 	} else {
 		puts(failed); puts("DBG: continue after flash_init fail\n");
+	}
+
+	{
+		void *dbg_malloc = malloc(64);
+		printf("DBG: malloc post-flash %s %p\n",
+		       dbg_malloc ? "ok" : "fail", dbg_malloc);
+		if (dbg_malloc)
+			free(dbg_malloc);
 	}
 
 	/* update start of FLASH memory    */
@@ -804,7 +821,9 @@ void board_init_r(gd_t *id, ulong dest_addr)
 #endif
 
 	/* relocate environment function pointers etc. */
-    env_relocate(); puts("DBG: after env_relocate");
+	puts("DBG: before env_relocate\n");
+	env_relocate();
+	puts("DBG: after env_relocate\n");
 	/*
 	 * after non-volatile devices & environment is setup and cpu code have
 	 * another round to deal with any initialization that might require
@@ -812,6 +831,7 @@ void board_init_r(gd_t *id, ulong dest_addr)
 	 * from a non-volatile device
 	 */
 	cpu_secondary_init_r();
+	puts("DBG: after cpu_secondary_init_r\n");
 
 	/*
 	 * Fill in missing fields of bd_info.
@@ -857,6 +877,7 @@ void board_init_r(gd_t *id, ulong dest_addr)
 
 #ifdef CONFIG_CMD_NET
 	/* kept around for legacy kernels only ... ignore the next section */
+	puts("DBG: before eth_getenv_enetaddr\n");
 	eth_getenv_enetaddr("ethaddr", bd->bi_enetaddr);
 #ifdef CONFIG_HAS_ETH1
 	eth_getenv_enetaddr("eth1addr", bd->bi_enet1addr);
@@ -873,6 +894,7 @@ void board_init_r(gd_t *id, ulong dest_addr)
 #ifdef CONFIG_HAS_ETH5
 	eth_getenv_enetaddr("eth5addr", bd->bi_enet5addr);
 #endif
+	puts("DBG: after eth_getenv_enetaddr\n");
 #endif /* CONFIG_CMD_NET */
 
 	WATCHDOG_RESET();
@@ -881,16 +903,20 @@ void board_init_r(gd_t *id, ulong dest_addr)
 	/*
 	 * Do pci configuration
 	 */
+	puts("DBG: before pci_init\n");
 	pci_init();
+	puts("DBG: after pci_init\n");
 #endif
 
 /** leave this here (after malloc(), environment and PCI are working) **/
 	/* Initialize stdio devices */
-    puts("DBG: before stdio_init");
-	stdio_init(); puts("DBG: after stdio_init");
+	puts("DBG: before stdio_init\n");
+	stdio_init();
+	puts("DBG: after stdio_init\n");
 	/* Initialize the jump table for applications */
-    puts("DBG: before jumptable_init");
-	jumptable_init(); puts("DBG: after jumptable_init");
+	puts("DBG: before jumptable_init\n");
+	jumptable_init();
+	puts("DBG: after jumptable_init\n");
 
 #if defined(CONFIG_API)
 	/* Initialize API */
@@ -898,8 +924,9 @@ void board_init_r(gd_t *id, ulong dest_addr)
 #endif
 
 	/* Initialize the console (after the relocation and devices init) */
-    puts("DBG: before console_init_r");
-	console_init_r(); puts("DBG: after console_init_r");
+	puts("DBG: before console_init_r\n");
+	console_init_r();
+	puts("DBG: after console_init_r\n");
 
 #if defined(CONFIG_MISC_INIT_R)
 	/* miscellaneous platform dependent initialisations */

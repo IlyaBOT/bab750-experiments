@@ -211,8 +211,16 @@ void set_default_env(const char *s)
 	}
 
 	if (himport_r(&env_htab, (char *)default_environment,
-			sizeof(default_environment), '\0', 0) == 0)
+			sizeof(default_environment), '\0', 0) == 0) {
 		error("Environment import failed: errno = %d\n", errno);
+		puts("DBG: falling back to linear default environment\n");
+		if (env_htab.table)
+			hdestroy_r(&env_htab);
+		gd->env_addr = (ulong)&default_environment[0];
+		gd->env_valid = 0;
+		gd->flags &= ~GD_FLG_ENV_READY;
+		return;
+	}
 
 	gd->flags |= GD_FLG_ENV_READY;
 }

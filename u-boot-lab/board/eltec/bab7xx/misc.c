@@ -37,23 +37,13 @@ extern void *nvram_read (void *dest, const short src, size_t count);
 extern void nvram_write (short dest, const void *src, size_t count);
 
 /* globals */
-unsigned int ata_reset_time = 60;
-unsigned int scsi_reset_time = 10;
 unsigned int eltec_board;
-
-/* BAB750 uses SYM53C875(default) and BAB740 uses SYM53C860
- * values fixed after board identification
- */
-unsigned short scsi_dev_id = PCI_DEVICE_ID_NCR_53C875;
-unsigned int   scsi_max_scsi_id = 15;
-unsigned char  scsi_sym53c8xx_ccf = 0x13;
 
 /*----------------------------------------------------------------------------*/
 /*
  * handle sroms on BAB740/750
  * fix ether address
  * L2 cache initialization
- * ide dma control
  */
 int misc_init_r (void)
 {
@@ -63,7 +53,6 @@ int misc_init_r (void)
     char buf[256];
     char hex[23] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 0,
 	     0, 0, 0, 0, 10, 11, 12, 13, 14, 15 };
-    pci_dev_t bdf;
 
     char sromSYM[] = {
 #ifdef TULIP_BUG
@@ -335,86 +324,21 @@ int misc_init_r (void)
     */
 #if defined(CONFIG_SYS_L2_BAB7xx)
     ptr = getenv("l2cache");
-    if (*ptr == '0')
+    if (ptr && *ptr == '0')
     {
 	printf ("Cache: L2 NOT activated on BAB%d\n", eltec_board);
     }
     else
     {
+	if (!ptr)
+	    puts("Cache: l2cache env missing, defaulting to enabled\n");
 	printf ("Cache: L2 activated on BAB%d\n", eltec_board);
 	l2_cache_enable(*(int*)&eerev.res[0]);
     }
 #endif
-
-   /*
-    * Reconfig ata reset timeout from environment
-    */
-    if ((ptr = getenv ("ata_reset_time")) != NULL)
-    {
-	ata_reset_time = (int)simple_strtoul (ptr, NULL, 10);
-    }
-    else
-    {
-	sprintf (buf, "%d", ata_reset_time);
-	setenv ("ata_reset_time", buf);
-    }
-
-   /*
-    * Reconfig scsi reset timeout from environment
-    */
-    if ((ptr = getenv ("scsi_reset_time")) != NULL)
-    {
-	scsi_reset_time = (int)simple_strtoul (ptr, NULL, 10);
-    }
-    else
-    {
-	sprintf (buf, "%d", scsi_reset_time);
-	setenv ("scsi_reset_time", buf);
-    }
-
-
-    if ((bdf = pci_find_device(PCI_VENDOR_ID_WINBOND, PCI_DEVICE_ID_WINBOND_83C553, 0)) > 0)
-    {
-	if (pci_find_device(PCI_VENDOR_ID_NCR, PCI_DEVICE_ID_NCR_53C860, 0) > 0)
-	{
-	    /* BAB740 with SCSI=IRQ 11; SCC=IRQ 9; no IDE; NCR860 at 80 MHz */
-	    scsi_dev_id = PCI_DEVICE_ID_NCR_53C860;
-	    scsi_max_scsi_id = 7;
-	    scsi_sym53c8xx_ccf = 0x15;
-	    pci_write_config_byte (bdf, WINBOND_IDEIRCR, 0xb0);
-	}
-
-	if ((ptr = getenv ("ide_dma_off")) != NULL)
-	{
-	    u_long dma_off = simple_strtoul (ptr, NULL, 10);
-	    /*
-	    * setup user defined registers
-	    * s.a. linux/drivers/ide/sl82c105.c
-	    */
-	    bdf |= PCI_BDF(0,0,1);            /* ide user reg at bdf function 1 */
-	    if (dma_off & 1)
-	    {
-		pci_write_config_byte (bdf, 0x46, 1);
-		printf("IDE:   DMA off flag set: Bus 0 : Dev 0\n");
-	    }
-	    if (dma_off & 2)
-	    {
-		pci_write_config_byte (bdf, 0x4a, 1);
-		printf("IDE:   DMA off flag set: Bus 0 : Dev 1\n");
-	    }
-	    if (dma_off & 4)
-	    {
-		pci_write_config_byte (bdf, 0x4e, 1);
-		printf("IDE:   DMA off flag set: Bus 1 : Dev 0\n");
-	    }
-	    if (dma_off & 8)
-	    {
-		pci_write_config_byte (bdf, 0x52, 1);
-		printf("IDE:   DMA off flag set: Bus 1 : Dev 1\n");
-	    }
-	}
-    }
+    /* IDE/SCSI support intentionally disabled on this board setup. */
     return (0);
+
 }
 
 /*----------------------------------------------------------------------------*/
