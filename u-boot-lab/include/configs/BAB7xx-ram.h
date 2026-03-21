@@ -210,8 +210,8 @@
 /*
  * Flash mapping/organization on the MPC10x.
  */
-#define FLASH_BASE0_PRELIM      0xff800000
-#define FLASH_BASE1_PRELIM      0xffc00000
+#define FLASH_BASE0_PRELIM      0xffc00000
+#define FLASH_BASE1_PRELIM      0xff800000
 
 #define CONFIG_SYS_MAX_FLASH_BANKS     2           /* max number of memory banks    */
 #define CONFIG_SYS_MAX_FLASH_SECT      67          /* max number of sectors on one chip */
