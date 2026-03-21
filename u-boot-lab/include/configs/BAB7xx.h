@@ -114,7 +114,7 @@
 #define CONFIG_SYS_MEMTEST_END         0x04000000  /* 0 ... 64 MB in DRAM    */
 
 #define CONFIG_SYS_LOAD_ADDR           0x1000000   /* default load address    */
-#define CONFIG_SYS_TEXT_BASE           0x01000000  /* run U-Boot from RAM for chainload */
+#define CONFIG_SYS_TEXT_BASE           0xFFF00000  /* flash/UserROM base */
 
 #define CONFIG_SYS_HZ                  1000        /* dec. freq: 1 ms ticks */
 

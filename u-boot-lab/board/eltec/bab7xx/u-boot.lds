@@ -31,7 +31,7 @@ OUTPUT_ARCH(powerpc)
 SECTIONS
 {
   /* Read-only sections, merged into text segment: */
-  . = 0x01000000 + SIZEOF_HEADERS;
+  . = TEXT_BASE + SIZEOF_HEADERS;
   .interp : { *(.interp) }
   .hash          : { *(.hash)		}
   .dynsym        : { *(.dynsym)		}
