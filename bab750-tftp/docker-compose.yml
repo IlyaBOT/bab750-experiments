@@ -1,0 +1,12 @@
+services:
+  tftp:
+    image: alpine:3.20
+    container_name: bab750-tftp
+    restart: unless-stopped
+    command: >
+      sh -c "apk add --no-cache tftp-hpa >/dev/null &&
+      in.tftpd --listen --foreground --verbose --secure /tftpboot"
+    ports:
+      - "69:69/udp"
+    volumes:
+      - ./tftpboot:/tftpboot:ro
