@@ -1,0 +1,8 @@
+services:
+  bab750-ftp:
+    build: .
+    container_name: bab750-ftp
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./ftp-root:/srv/ftp:ro
