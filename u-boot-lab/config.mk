@@ -190,6 +190,8 @@ CFLAGS := $(CPPFLAGS) -Wall -Wstrict-prototypes
 endif
 
 CFLAGS += $(call cc-option,-fno-stack-protector)
+CFLAGS += $(call cc-option,-fgnu89-inline)
+CFLAGS += $(call cc-option,-fcommon)
 
 # $(CPPFLAGS) sets -g, which causes gcc to pass a suitable -g<format>
 # option to the assembler.

@@ -83,8 +83,6 @@
 
 #define CONFIG_CMD_PCI
 #define CONFIG_CMD_JFFS2
-#define CONFIG_CMD_SCSI
-#define CONFIG_CMD_IDE
 #define CONFIG_CMD_DATE
 #define CONFIG_CMD_FDC
 #define CONFIG_CMD_ELF
@@ -299,34 +297,10 @@ extern unsigned char   scsi_sym53c8xx_ccf;
 #endif
 
 /*
- * ATAPI Support (experimental)
+ * Legacy IDE/SCSI support is intentionally disabled in this lab tree.
+ * The old cmd_ide/cmd_scsi stack does not build cleanly with a modern host
+ * toolchain, and it is not required for producing a BAB7xx U-Boot image.
  */
-#define CONFIG_ATAPI
-#define CONFIG_SYS_IDE_MAXBUS          1                       /* max. 2 IDE busses    */
-#define CONFIG_SYS_IDE_MAXDEVICE       (CONFIG_SYS_IDE_MAXBUS*2)      /* max. 2 drives per IDE bus */
-
-#define CONFIG_SYS_ATA_BASE_ADDR       CONFIG_SYS_60X_PCI_IO_OFFSET   /* base address */
-#define CONFIG_SYS_ATA_IDE0_OFFSET     0x1F0                   /* default ide0 offste */
-#define CONFIG_SYS_ATA_IDE1_OFFSET     0x170                   /* default ide1 offset */
-#define CONFIG_SYS_ATA_DATA_OFFSET     0                       /* data reg offset    */
-#define CONFIG_SYS_ATA_REG_OFFSET      0                       /* reg offset */
-#define CONFIG_SYS_ATA_ALT_OFFSET      0x200                   /* alternate register offset */
-
-#define ATA_RESET_TIME          (ata_reset_time)
-
-#undef  CONFIG_IDE_PCMCIA                               /* no pcmcia interface required */
-#undef  CONFIG_IDE_LED                                  /* no led for ide supported */
-
-/*
- * SCSI support (experimental) only SYM53C8xx supported
- */
-#define CONFIG_SCSI_SYM53C8XX
-#define CONFIG_SCSI_DEV_ID      (scsi_dev_id)           /* 875 or 860 */
-#define CONFIG_SYS_SCSI_SYM53C8XX_CCF  (scsi_sym53c8xx_ccf)    /* value for none 40 mhz clocks */
-#define CONFIG_SYS_SCSI_MAX_LUN        8                       /* number of supported LUNs */
-#define CONFIG_SYS_SCSI_MAX_SCSI_ID    (scsi_max_scsi_id)      /* max SCSI ID (0-6) */
-#define CONFIG_SYS_SCSI_MAX_DEVICE     (15 * CONFIG_SYS_SCSI_MAX_LUN) /* max. Target devices */
-#define CONFIG_SYS_SCSI_SPIN_UP_TIME   (scsi_reset_time)
 
 /*
  * Partion suppport

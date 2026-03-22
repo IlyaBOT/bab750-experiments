@@ -42,7 +42,10 @@
 			out_be16((u16*) (addr),(val)); udelay(1); \
 			} while (0)
 
+#if defined(CONFIG_SYS_USE_WINBOND_IDE) && CONFIG_SYS_USE_WINBOND_IDE && \
+	defined(CONFIG_SYS_IDE_MAXBUS)
 extern uint ide_bus_offset[CONFIG_SYS_IDE_MAXBUS];
+#endif
 
 void initialise_pic(void);
 void initialise_dma(void);
@@ -79,14 +82,19 @@ void initialise_w83c553f(void)
 
 	/*
 	 * Interrupt routing:
-	 *  - IDE  -> IRQ 9/0
 	 *  - INTA -> IRQ 10
 	 *  - INTB -> IRQ 11
 	 *  - INTC -> IRQ 14
 	 *  - INTD -> IRQ 15
+	 *
+	 * IDE routing and BAR setup are only needed when the onboard
+	 * Winbond IDE function is enabled in the board configuration.
 	 */
-	pci_write_config_byte(devbusfn, WINBOND_IDEIRCR, 0x90);
 	pci_write_config_word(devbusfn, WINBOND_PCIIRCR, 0xABEF);
+
+#if defined(CONFIG_SYS_USE_WINBOND_IDE) && CONFIG_SYS_USE_WINBOND_IDE && \
+	defined(CONFIG_SYS_IDE_MAXBUS)
+	pci_write_config_byte(devbusfn, WINBOND_IDEIRCR, 0x90);
 
 	/*
 	 * Read IDE bus offsets from function 1 device.
@@ -116,6 +124,7 @@ void initialise_w83c553f(void)
 	pci_read_config_word(devbusfn, PCI_COMMAND, &reg16);
 	reg16 |= PCI_COMMAND_MASTER | PCI_COMMAND_IO;
 	pci_write_config_word(devbusfn, PCI_COMMAND, reg16);
+#endif
 
 	/*
 	 * Initialise ISA interrupt controller

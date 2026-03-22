@@ -133,9 +133,9 @@ NOPEDOBJS := $(addprefix $(obj),$(NOPED_OBJ_FILES-y))
 # Use native tools and options
 # Define __KERNEL_STRICT_NAMES to prevent typedef overlaps
 #
-HOSTCPPFLAGS =	-idirafter $(SRCTREE)/include \
-		-idirafter $(OBJTREE)/include2 \
-		-idirafter $(OBJTREE)/include \
+HOSTCPPFLAGS =	-I$(SRCTREE)/include \
+		-I$(OBJTREE)/include2 \
+		-I$(OBJTREE)/include \
 	        -I $(SRCTREE)/lib/libfdt \
 		-I $(SRCTREE)/tools \
 		-DTEXT_BASE=$(TEXT_BASE) -DUSE_HOSTCC \
