@@ -33,30 +33,30 @@ SECTIONS
   /* Read-only sections, merged into text segment: */
   . = TEXT_BASE + SIZEOF_HEADERS;
   .interp : { *(.interp) }
-  .hash          : { *(.hash)		}
-  .dynsym        : { *(.dynsym)		}
-  .dynstr        : { *(.dynstr)		}
-  .rel.text      : { *(.rel.text)		}
-  .rela.text     : { *(.rela.text)	}
-  .rel.data      : { *(.rel.data)		}
-  .rela.data     : { *(.rela.data)	}
-  .rel.rodata    : { *(.rel.rodata)	}
-  .rela.rodata   : { *(.rela.rodata)	}
-  .rel.got       : { *(.rel.got)		}
-  .rela.got      : { *(.rela.got)		}
-  .rel.ctors     : { *(.rel.ctors)	}
-  .rela.ctors    : { *(.rela.ctors)	}
-  .rel.dtors     : { *(.rel.dtors)	}
-  .rela.dtors    : { *(.rela.dtors)	}
-  .rel.bss       : { *(.rel.bss)		}
-  .rela.bss      : { *(.rela.bss)		}
-  .rel.plt       : { *(.rel.plt)		}
-  .rela.plt      : { *(.rela.plt)		}
-  .init          : { *(.init)	}
+  .hash          : { *(.hash)             }
+  .dynsym        : { *(.dynsym)           }
+  .dynstr        : { *(.dynstr)           }
+  .rel.text      : { *(.rel.text)         }
+  .rela.text     : { *(.rela.text)        }
+  .rel.data      : { *(.rel.data)         }
+  .rela.data     : { *(.rela.data)        }
+  .rel.rodata    : { *(.rel.rodata)       }
+  .rela.rodata   : { *(.rela.rodata)      }
+  .rel.got       : { *(.rel.got)          }
+  .rela.got      : { *(.rela.got)         }
+  .rel.ctors     : { *(.rel.ctors)        }
+  .rela.ctors    : { *(.rela.ctors)       }
+  .rel.dtors     : { *(.rel.dtors)        }
+  .rela.dtors    : { *(.rela.dtors)       }
+  .rel.bss       : { *(.rel.bss)          }
+  .rela.bss      : { *(.rela.bss)         }
+  .rel.plt       : { *(.rel.plt)          }
+  .rela.plt      : { *(.rela.plt)         }
+  .init          : { *(.init)             }
   .plt : { *(.plt) }
   .text      :
   {
-    arch/powerpc/cpu/74xx_7xx/start.o	(.text)
+    arch/powerpc/cpu/74xx_7xx/start.o  (.text)
 
 /* store the environment in a seperate sector in the boot flash */
 /*    . = env_offset; */
@@ -72,7 +72,7 @@ SECTIONS
     *(.eh_frame)
     *(SORT_BY_ALIGNMENT(SORT_BY_NAME(.rodata*)))
   }
-  .fini      : { *(.fini)    } =0
+  .fini      : { *(.fini)    } = 0
   .ctors     : { *(.ctors)   }
   .dtors     : { *(.dtors)   }
 
@@ -82,13 +82,15 @@ SECTIONS
   PROVIDE (erotext = .);
   .reloc   :
   {
+    _GOT_TABLE_ = .;
     *(.got)
     _GOT2_TABLE_ = .;
     *(.got2)
     _FIXUP_TABLE_ = .;
     *(.fixup)
   }
-  __got2_entries = (_FIXUP_TABLE_ - _GOT2_TABLE_) >>2;
+  __got_entries = (_GOT2_TABLE_ - _GOT_TABLE_) >> 2;
+  __got2_entries = (_FIXUP_TABLE_ - _GOT2_TABLE_) >> 2;
   __fixup_entries = (. - _FIXUP_TABLE_)>>2;
 
   .data    :

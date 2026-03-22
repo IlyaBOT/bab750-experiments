@@ -611,7 +611,10 @@ void board_init_f(ulong bootflag)
 
 	gd->relocaddr = addr;	/* Store relocation addr, useful for debug */
 
+	serial_printf("DBG: pre-reloc addr=%08lx sp=%08lx gd=%p id=%p\n",
+		      addr, addr_sp, gd, id);
 	memcpy(id, (void *) gd, sizeof(gd_t));
+	serial_puts("DBG: before relocate_code\n");
 
 	relocate_code(addr_sp, id, addr);
 
@@ -635,11 +638,14 @@ void board_init_r(gd_t *id, ulong dest_addr)
 
 	gd = id;		/* initialize RAM version of global data */
 	bd = gd->bd;
-
 	gd->flags |= GD_FLG_RELOC;	/* tell others: relocation done */
+
+	serial_puts("DBG: enter board_init_r\n");
+	serial_printf("DBG: board_init_r gd=%p bd=%p dest=%08lx\n", gd, bd, dest_addr);
 
 	/* The Malloc area is immediately below the monitor copy in DRAM */
 	malloc_start = dest_addr - TOTAL_MALLOC_LEN;
+	serial_printf("DBG: board_init_r malloc_start=%08lx\n", malloc_start);
 
 #if defined(CONFIG_MPC85xx) || defined(CONFIG_MPC86xx)
 	/*
@@ -667,18 +673,24 @@ void board_init_r(gd_t *id, ulong dest_addr)
 	debug("Now running in RAM - U-Boot at: %08lx\n", dest_addr);
 
 	WATCHDOG_RESET();
+	serial_puts("DBG: before trap_init\n");
 
 	/*
 	 * Setup trap handlers
 	 */
 	trap_init(dest_addr);
+	serial_puts("DBG: after trap_init\n");
 
 #ifdef CONFIG_ADDR_MAP
+	serial_puts("DBG: before init_addr_map\n");
 	init_addr_map();
+	serial_puts("DBG: after init_addr_map\n");
 #endif
 
 #if defined(CONFIG_BOARD_EARLY_INIT_R)
+	serial_puts("DBG: before board_early_init_r\n");
 	board_early_init_r();
+	serial_puts("DBG: after board_early_init_r\n");
 #endif
 
 	monitor_flash_len = (ulong)&__init_end - dest_addr;
@@ -695,7 +707,9 @@ void board_init_r(gd_t *id, ulong dest_addr)
 	WATCHDOG_RESET();
 
 #if defined(CONFIG_SYS_DELAYED_ICACHE)
+	serial_puts("DBG: before icache_enable\n");
 	icache_enable();	/* it's time to enable the instruction cache */
+	serial_puts("DBG: after icache_enable\n");
 #endif
 
 #if defined(CONFIG_SYS_INIT_RAM_LOCK) && defined(CONFIG_E500)

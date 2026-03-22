@@ -1484,6 +1484,17 @@ static mbinptr av_[NAV * 2 + 2] = {
  IAV(120), IAV(121), IAV(122), IAV(123), IAV(124), IAV(125), IAV(126), IAV(127)
 };
 
+#define MALLOC_DBG_MAX 16
+static int malloc_dbg_budget = MALLOC_DBG_MAX;
+
+#define MALLOC_DBG(fmt, args...)                                             \
+	do {                                                                 \
+		if (malloc_dbg_budget > 0) {                                 \
+			printf("DBG: dlmalloc " fmt "\n", ##args);           \
+			malloc_dbg_budget--;                                 \
+		}                                                            \
+	} while (0)
+
 #ifdef CONFIG_NEEDS_MANUAL_RELOC
 void malloc_bin_reloc (void)
 {
@@ -1495,6 +1506,8 @@ void malloc_bin_reloc (void)
 }
 #endif
 
+static void mem_malloc_reset_state(void);
+
 ulong mem_malloc_start = 0;
 ulong mem_malloc_end = 0;
 ulong mem_malloc_brk = 0;
@@ -1504,6 +1517,9 @@ void *sbrk(ptrdiff_t increment)
 	ulong old = mem_malloc_brk;
 	ulong new = old + increment;
 
+	MALLOC_DBG("sbrk inc=%ld old=%08lx new=%08lx start=%08lx end=%08lx",
+		   (long)increment, old, new, mem_malloc_start, mem_malloc_end);
+
 	/*
 	 * if we are giving memory back make sure we clear it out since
 	 * we set MORECORE_CLEARS to 1
@@ -1511,8 +1527,11 @@ void *sbrk(ptrdiff_t increment)
 	if (increment < 0)
 		memset((void *)new, 0, -increment);
 
-	if ((new < mem_malloc_start) || (new > mem_malloc_end))
+	if ((new < mem_malloc_start) || (new > mem_malloc_end)) {
+		MALLOC_DBG("sbrk fail inc=%ld old=%08lx new=%08lx",
+			   (long)increment, old, new);
 		return (void *)MORECORE_FAILURE;
+	}
 
 	mem_malloc_brk = new;
 
@@ -1524,9 +1543,11 @@ void mem_malloc_init(ulong start, ulong size)
 	int i;
 	mbinptr bin;
 
+	malloc_dbg_budget = MALLOC_DBG_MAX;
 	mem_malloc_start = start;
 	mem_malloc_end = start + size;
 	mem_malloc_brk = start;
+	mem_malloc_reset_state();
 
 	memset((void *)mem_malloc_start, 0, size);
 
@@ -1538,6 +1559,11 @@ void mem_malloc_init(ulong start, ulong size)
 		bin->fd = bin;
 		bin->bk = bin;
 	}
+
+	MALLOC_DBG("init start=%08lx end=%08lx brk=%08lx top=%p initial_top=%p",
+		   mem_malloc_start, mem_malloc_end, mem_malloc_brk, top, initial_top);
+	MALLOC_DBG("init top_size=%08lx last_remainder=%p",
+		   (ulong)chunksize(top), last_remainder);
 }
 
 /* field-extraction macros */
@@ -1635,6 +1661,26 @@ static unsigned long mmapped_mem = 0;
 static unsigned int max_n_mmaps = 0;
 static unsigned long max_mmapped_mem = 0;
 #endif
+
+static void mem_malloc_reset_state(void)
+{
+	trim_threshold = DEFAULT_TRIM_THRESHOLD;
+	top_pad = DEFAULT_TOP_PAD;
+	n_mmaps_max = DEFAULT_MMAP_MAX;
+	mmap_threshold = DEFAULT_MMAP_THRESHOLD;
+	sbrk_base = (char *)(-1);
+	max_sbrked_mem = 0;
+	max_total_mem = 0;
+	mmapped_mem = 0;
+	memset(&current_mallinfo, 0, sizeof(current_mallinfo));
+#ifdef DEBUG
+	n_mmaps = 0;
+#endif
+#if HAVE_MMAP
+	max_n_mmaps = 0;
+	max_mmapped_mem = 0;
+#endif
+}
 
 
 
@@ -2003,6 +2049,9 @@ static void malloc_extend_top(nb) INTERNAL_SIZE_T nb;
   INTERNAL_SIZE_T old_top_size = chunksize(old_top);
   char*     old_end      = (char*)(chunk_at_offset(old_top, old_top_size));
 
+  MALLOC_DBG("extend nb=%08lx old_top=%p old_top_size=%08lx old_end=%p",
+	     (ulong)nb, old_top, (ulong)old_top_size, old_end);
+
   /* Pad request with top_pad plus minimal overhead */
 
   INTERNAL_SIZE_T    sbrk_size     = nb + top_pad + MINSIZE;
@@ -2019,8 +2068,11 @@ static void malloc_extend_top(nb) INTERNAL_SIZE_T nb;
 
   /* Fail if sbrk failed or if a foreign sbrk call killed our space */
   if (brk == (char*)(MORECORE_FAILURE) ||
-      (brk < old_end && old_top != initial_top))
+      (brk < old_end && old_top != initial_top)) {
+    MALLOC_DBG("extend fail brk=%p sbrk_size=%08lx old_end=%p initial=%d",
+	       brk, (ulong)sbrk_size, old_end, old_top == initial_top);
     return;
+  }
 
   sbrked_mem += sbrk_size;
 
@@ -2053,7 +2105,10 @@ static void malloc_extend_top(nb) INTERNAL_SIZE_T nb;
 
     /* Allocate correction */
     new_brk = (char*)(MORECORE (correction));
-    if (new_brk == (char*)(MORECORE_FAILURE)) return;
+    if (new_brk == (char*)(MORECORE_FAILURE)) {
+      MALLOC_DBG("extend fail correction=%08lx", (ulong)correction);
+      return;
+    }
 
     sbrked_mem += correction;
 
@@ -2071,6 +2126,7 @@ static void malloc_extend_top(nb) INTERNAL_SIZE_T nb;
       if (old_top_size < MINSIZE)
       {
 	set_head(top, PREV_INUSE); /* will force null return from malloc */
+	MALLOC_DBG("extend fail old_top_size=%08lx too small", (ulong)old_top_size);
 	return;
       }
 
@@ -2091,6 +2147,9 @@ static void malloc_extend_top(nb) INTERNAL_SIZE_T nb;
     max_sbrked_mem = sbrked_mem;
   if ((unsigned long)(mmapped_mem + sbrked_mem) > (unsigned long)max_total_mem)
     max_total_mem = mmapped_mem + sbrked_mem;
+
+  MALLOC_DBG("extend ok brk=%p sbrk_size=%08lx top=%p top_size=%08lx brk_now=%08lx",
+	     brk, (ulong)sbrk_size, top, (ulong)chunksize(top), mem_malloc_brk);
 
   /* We always land on a page boundary */
   assert(((unsigned long)((char*)top + top_size) & (pagesz - 1)) == 0);
@@ -2185,12 +2244,17 @@ Void_t* mALLOc(bytes) size_t bytes;
   /* check if mem_malloc_init() was run */
   if ((mem_malloc_start == 0) && (mem_malloc_end == 0)) {
     /* not initialized yet */
+    MALLOC_DBG("malloc req=%08lx fail: allocator not initialized", (ulong)bytes);
     return 0;
   }
 
   if ((long)bytes < 0) return 0;
 
   nb = request2size(bytes);  /* padded request size; */
+
+  MALLOC_DBG("malloc req=%08lx nb=%08lx top=%p top_size=%08lx brk=%08lx end=%08lx",
+	     (ulong)bytes, (ulong)nb, top, (ulong)chunksize(top),
+	     mem_malloc_brk, mem_malloc_end);
 
   /* Check for exact match in a bin */
 
@@ -2390,8 +2454,13 @@ Void_t* mALLOc(bytes) size_t bytes;
 
     /* Try to extend */
     malloc_extend_top(nb);
-    if ( (remainder_size = chunksize(top) - nb) < (long)MINSIZE)
+    MALLOC_DBG("malloc after extend top=%p top_size=%08lx",
+	       top, (ulong)chunksize(top));
+    if ( (remainder_size = chunksize(top) - nb) < (long)MINSIZE) {
+      MALLOC_DBG("malloc fail after extend remainder=%08lx",
+		 (ulong)remainder_size);
       return 0; /* propagate failure */
+    }
   }
 
   victim = top;
