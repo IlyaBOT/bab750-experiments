@@ -1,10 +1,10 @@
 /*
- * (C) Copyright 2000-2010
+ * (C) Copyright 2000-2002
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
  *
  * (C) Copyright 2001 Sysgo Real-Time Solutions, GmbH <www.elinos.com>
  * Andreas Heppel <aheppel@sysgo.de>
- *
+
  * See file CREDITS for list of people who contributed to this
  * project.
  *
@@ -28,11 +28,23 @@
 #include <command.h>
 #include <environment.h>
 #include <linux/stddef.h>
-#include <search.h>
-#include <errno.h>
 #include <malloc.h>
 
 DECLARE_GLOBAL_DATA_PTR;
+
+#undef DEBUG_ENV
+#ifdef DEBUG_ENV
+#define DEBUGF(fmt,args...) printf(fmt ,##args)
+#else
+#define DEBUGF(fmt,args...)
+#endif
+
+extern env_t *env_ptr;
+
+extern void env_relocate_spec (void);
+extern uchar env_get_char_spec(int);
+
+static uchar env_get_char_init (int index);
 
 /************************************************************************
  * Default settings to be used when no valid environment is found
@@ -40,25 +52,7 @@ DECLARE_GLOBAL_DATA_PTR;
 #define XMK_STR(x)	#x
 #define MK_STR(x)	XMK_STR(x)
 
-const uchar default_environment[] = {
-#if defined(CONFIG_BOARD_HARDKERNEL)
-    "default_bootcmd=echo >>> Run Default Bootcmd <<<;movi read kernel 0 40008000;movi read rootfs 0 41000000 100000;bootz 40008000 41000000\0"
-    "bootscript=source 40008000\0"
-    "loadbootscript_1=echo >>> Load Boot Script from mmc 0:1 <<<;fatload mmc 0:1 40008000 boot.scr\0"
-    "loadbootscript_2=echo >>> Load Boot Script from mmc 0:2 <<<;fatload mmc 0:2 40008000 boot.scr\0"
-    "loadbootscript_3=echo >>> Load Boot Script from mmc 1:1 <<<;fatload mmc 1:1 40008000 boot.scr\0"
-    "loadbootscript_4=echo >>> Load Boot Script from mmc 1:2 <<<;fatload mmc 1:2 40008000 boot.scr\0"
-    #if defined(CONFIG_UBOOT_COPY_SD2EMMC)
-        "copy_uboot_sd2emmc=" CONFIG_UBOOT_COPY_SD2EMMC "\0"
-    #endif
-    #if defined(CONFIG_UBOOT_COPY_EMMC2SD)
-        "copy_uboot_emmc2sd=" CONFIG_UBOOT_COPY_EMMC2SD "\0"
-    #endif
-    #if defined(CONFIG_ERASE_UBOOT_ENV_CMD)
-        "env_erase=" CONFIG_ERASE_UBOOT_ENV_CMD "\0"
-    #endif
-#endif    
-
+uchar default_environment[] = {
 #ifdef	CONFIG_BOOTARGS
 	"bootargs="	CONFIG_BOOTARGS			"\0"
 #endif
@@ -105,13 +99,13 @@ const uchar default_environment[] = {
 	"serverip="	MK_STR(CONFIG_SERVERIP)		"\0"
 #endif
 #ifdef	CONFIG_SYS_AUTOLOAD
-	"autoload="	CONFIG_SYS_AUTOLOAD		"\0"
+	"autoload="	CONFIG_SYS_AUTOLOAD			"\0"
 #endif
 #ifdef	CONFIG_PREBOOT
 	"preboot="	CONFIG_PREBOOT			"\0"
 #endif
 #ifdef	CONFIG_ROOTPATH
-	"rootpath="	CONFIG_ROOTPATH			"\0"
+	"rootpath="	MK_STR(CONFIG_ROOTPATH)		"\0"
 #endif
 #ifdef	CONFIG_GATEWAYIP
 	"gatewayip="	MK_STR(CONFIG_GATEWAYIP)	"\0"
@@ -123,182 +117,165 @@ const uchar default_environment[] = {
 	"hostname="	MK_STR(CONFIG_HOSTNAME)		"\0"
 #endif
 #ifdef	CONFIG_BOOTFILE
-	"bootfile="	CONFIG_BOOTFILE			"\0"
+	"bootfile="	MK_STR(CONFIG_BOOTFILE)		"\0"
 #endif
 #ifdef	CONFIG_LOADADDR
 	"loadaddr="	MK_STR(CONFIG_LOADADDR)		"\0"
 #endif
-#ifdef	CONFIG_CLOCKS_IN_MHZ
+#ifdef  CONFIG_CLOCKS_IN_MHZ
 	"clocks_in_mhz=1\0"
 #endif
 #if defined(CONFIG_PCI_BOOTDELAY) && (CONFIG_PCI_BOOTDELAY > 0)
 	"pcidelay="	MK_STR(CONFIG_PCI_BOOTDELAY)	"\0"
 #endif
-#ifdef	CONFIG_ENV_VARS_UBOOT_CONFIG
-	"arch="		CONFIG_SYS_ARCH			"\0"
-	"cpu="		CONFIG_SYS_CPU			"\0"
-	"board="	CONFIG_SYS_BOARD		"\0"
-#ifdef CONFIG_SYS_VENDOR
-	"vendor="	CONFIG_SYS_VENDOR		"\0"
-#endif
-#ifdef CONFIG_SYS_SOC
-	"soc="		CONFIG_SYS_SOC			"\0"
-#endif
-#endif
-#ifdef	CONFIG_EXTRA_ENV_SETTINGS
+#ifdef  CONFIG_EXTRA_ENV_SETTINGS
 	CONFIG_EXTRA_ENV_SETTINGS
 #endif
 	"\0"
 };
 
-struct hsearch_data env_htab;
-
-static uchar __env_get_char_spec(int index)
+void env_crc_update (void)
 {
-	return *((uchar *)(gd->env_addr + index));
+	env_ptr->crc = crc32(0, env_ptr->data, ENV_SIZE);
 }
-uchar env_get_char_spec(int)
-	__attribute__((weak, alias("__env_get_char_spec")));
 
-static uchar env_get_char_init(int index)
+static uchar env_get_char_init (int index)
 {
+	uchar c;
+
 	/* if crc was bad, use the default environment */
 	if (gd->env_valid)
-		return env_get_char_spec(index);
-	else
-		return default_environment[index];
+	{
+		c = env_get_char_spec(index);
+	} else {
+		c = default_environment[index];
+	}
+
+	return (c);
 }
 
-uchar env_get_char_memory(int index)
+uchar env_get_char_memory (int index)
 {
-	return *env_get_addr(index);
+	if (gd->env_valid) {
+		return ( *((uchar *)(gd->env_addr + index)) );
+	} else {
+		return ( default_environment[index] );
+	}
 }
 
-uchar env_get_char(int index)
+uchar env_get_char (int index)
 {
+	uchar c;
+
 	/* if relocated to RAM */
 	if (gd->flags & GD_FLG_RELOC)
-		return env_get_char_memory(index);
+		c = env_get_char_memory(index);
 	else
-		return env_get_char_init(index);
+		c = env_get_char_init(index);
+
+	return (c);
 }
 
-const uchar *env_get_addr(int index)
+uchar *env_get_addr (int index)
 {
-	if (gd->env_valid)
-		return (uchar *)(gd->env_addr + index);
-	else
-		return &default_environment[index];
+	if (gd->env_valid) {
+		return ( ((uchar *)(gd->env_addr + index)) );
+	} else {
+		return (&default_environment[index]);
+	}
 }
 
-void set_default_env(const char *s)
+void set_default_env(void)
 {
 	if (sizeof(default_environment) > ENV_SIZE) {
-		puts("*** Error - default environment is too large\n\n");
+		puts ("*** Error - default environment is too large\n\n");
 		return;
 	}
 
-	if (s) {
-		if (*s == '!') {
-			printf("*** Warning - %s, "
-				"using default environment\n\n",
-				s + 1);
-		} else {
-			puts(s);
-		}
-	} else {
-		puts("Using default environment\n\n");
-	}
-
-	if (himport_r(&env_htab, (char *)default_environment,
-			sizeof(default_environment), '\0', 0) == 0) {
-		error("Environment import failed: errno = %d\n", errno);
-		puts("DBG: falling back to linear default environment\n");
-		if (env_htab.table)
-			hdestroy_r(&env_htab);
-		gd->env_addr = (ulong)&default_environment[0];
-		gd->env_valid = 0;
-		gd->flags &= ~GD_FLG_ENV_READY;
-		return;
-	}
-
-	gd->flags |= GD_FLG_ENV_READY;
-}
-
-/*
- * Check if CRC is valid and (if yes) import the environment.
- * Note that "buf" may or may not be aligned.
- */
-int env_import(const char *buf, int check)
-{
-	env_t *ep = (env_t *)buf;
-
-	if (check) {
-		uint32_t crc;
-
-		memcpy(&crc, &ep->crc, sizeof(crc));
-
-		if (crc32(0, ep->data, ENV_SIZE) != crc) {
-			set_default_env("!bad CRC");
-			return 0;
-		}
-	}
-
-	if (himport_r(&env_htab, (char *)ep->data, ENV_SIZE, '\0', 0)) {
-		gd->flags |= GD_FLG_ENV_READY;
-		return 1;
-	}
-
-	error("Cannot import environment: errno = %d\n", errno);
-
-	set_default_env("!import failed");
-
-	return 0;
-}
-
-void env_relocate(void)
-{
-#if defined(CONFIG_NEEDS_MANUAL_RELOC)
-	env_reloc();
+	memset(env_ptr, 0, sizeof(env_t));
+	memcpy(env_ptr->data, default_environment,
+	       sizeof(default_environment));
+#ifdef CONFIG_SYS_REDUNDAND_ENVIRONMENT
+	env_ptr->flags = 0xFF;
 #endif
+	env_crc_update ();
+	gd->env_valid = 1;
+}
+
+void env_relocate (void)
+{
+#ifndef CONFIG_RELOC_FIXUP_WORKS
+	DEBUGF ("%s[%d] offset = 0x%lx\n", __FUNCTION__,__LINE__,
+		gd->reloc_off);
+#endif
+
+#ifdef ENV_IS_EMBEDDED
+	/*
+	 * The environment buffer is embedded with the text segment,
+	 * just relocate the environment pointer
+	 */
+#ifndef CONFIG_RELOC_FIXUP_WORKS
+	env_ptr = (env_t *)((ulong)env_ptr + gd->reloc_off);
+#endif
+	DEBUGF ("%s[%d] embedded ENV at %p\n", __FUNCTION__,__LINE__,env_ptr);
+#else
+	/*
+	 * We must allocate a buffer for the environment
+	 */
+	env_ptr = (env_t *)malloc (CONFIG_ENV_SIZE);
+	DEBUGF ("%s[%d] malloced ENV at %p\n", __FUNCTION__,__LINE__,env_ptr);
+#endif
+
 	if (gd->env_valid == 0) {
 #if defined(CONFIG_ENV_IS_NOWHERE)	/* Environment not changable */
-		set_default_env(NULL);
+		puts ("Using default environment\n\n");
 #else
-		bootstage_error(BOOTSTAGE_ID_NET_CHECKSUM);
-		set_default_env("!bad CRC");
+		puts ("*** Warning - bad CRC, using default environment\n\n");
+		show_boot_progress (-60);
 #endif
-	} else {
-		env_relocate_spec();
+		set_default_env();
 	}
+	else {
+		env_relocate_spec ();
+	}
+	gd->env_addr = (ulong)&(env_ptr->data);
 }
 
 #ifdef CONFIG_AUTO_COMPLETE
 int env_complete(char *var, int maxv, char *cmdv[], int bufsz, char *buf)
 {
-	ENTRY *match;
-	int found, idx;
+	int i, nxt, len, vallen, found;
+	const char *lval, *rval;
 
-	idx = 0;
 	found = 0;
 	cmdv[0] = NULL;
 
-	while ((idx = hmatch_r(var, idx, &match, &env_htab))) {
-		int vallen = strlen(match->key) + 1;
+	len = strlen(var);
+	/* now iterate over the variables and select those that match */
+	for (i=0; env_get_char(i) != '\0'; i=nxt+1) {
 
-		if (found >= maxv - 2 || bufsz < vallen)
+		for (nxt=i; env_get_char(nxt) != '\0'; ++nxt)
+			;
+
+		lval = (char *)env_get_addr(i);
+		rval = strchr(lval, '=');
+		if (rval != NULL) {
+			vallen = rval - lval;
+			rval++;
+		} else
+			vallen = strlen(lval);
+
+		if (len > 0 && (vallen < len || memcmp(lval, var, len) != 0))
+			continue;
+
+		if (found >= maxv - 2 || bufsz < vallen + 1) {
+			cmdv[found++] = "...";
 			break;
-
+		}
 		cmdv[found++] = buf;
-		memcpy(buf, match->key, vallen);
-		buf += vallen;
-		bufsz -= vallen;
+		memcpy(buf, lval, vallen); buf += vallen; bufsz -= vallen;
+		*buf++ = '\0'; bufsz--;
 	}
-
-	qsort(cmdv, found, sizeof(cmdv[0]), strcmp_compar);
-
-	if (idx)
-		cmdv[found++] = "...";
 
 	cmdv[found] = NULL;
 	return found;

@@ -34,13 +34,17 @@
 
 DECLARE_GLOBAL_DATA_PTR;
 
-ulong bab7xx_get_bus_freq(void)
+/*---------------------------------------------------------------------------*/
+/*
+ * Get Bus clock frequency
+ */
+ulong bab7xx_get_bus_freq (void)
 {
 	/*
 	 * The GPIO Port 1 on BAB7xx reflects the bus speed.
 	 */
 	volatile struct GPIO *gpio =
-		(struct GPIO *)(CONFIG_SYS_ISA_IO + CONFIG_SYS_NS87308_GPIO_BASE);
+		(struct GPIO *) (CONFIG_SYS_ISA_IO + CONFIG_SYS_NS87308_GPIO_BASE);
 
 	unsigned char data = gpio->dta1;
 
@@ -50,76 +54,88 @@ ulong bab7xx_get_bus_freq(void)
 	return 83333333;
 }
 
+/*---------------------------------------------------------------------------*/
+
 /*
  * Measure CPU clock speed (core clock GCLK1) (Approx. GCLK frequency in Hz)
  */
-ulong bab7xx_get_gclk_freq(void)
+ulong bab7xx_get_gclk_freq (void)
 {
 	static const int pllratio_to_factor[] = {
-		0, 75, 70, 0, 20, 65, 100, 45, 30, 55, 40, 50, 80, 60, 35, 0,
+		00, 75, 70, 00, 20, 65, 100, 45, 30, 55, 40, 50, 80, 60, 35,
+			00,
 	};
 
-	return pllratio_to_factor[get_hid1() >> 28] *
-		(bab7xx_get_bus_freq() / 10);
+	return pllratio_to_factor[get_hid1 () >> 28] *
+		(bab7xx_get_bus_freq () / 10);
 }
 
-int checkcpu(void)
+/*----------------------------------------------------------------------------*/
+
+int checkcpu (void)
 {
-	uint pvr = get_pvr();
+	uint pvr = get_pvr ();
 
-	printf("MPC7xx V%d.%d", (pvr >> 8) & 0xFF, pvr & 0xFF);
-	printf(" at %ld / %ld MHz\n", bab7xx_get_gclk_freq() / 1000000,
-	       bab7xx_get_bus_freq() / 1000000);
+	printf ("MPC7xx V%d.%d", (pvr >> 8) & 0xFF, pvr & 0xFF);
+	printf (" at %ld / %ld MHz\n", bab7xx_get_gclk_freq () / 1000000,
+		bab7xx_get_bus_freq () / 1000000);
 
-	return 0;
+	return (0);
 }
 
-int checkboard(void)
+/* ------------------------------------------------------------------------- */
+
+int checkboard (void)
 {
 #ifdef CONFIG_SYS_ADDRESS_MAP_A
-	puts("Board: ELTEC BAB7xx PReP\n");
+	puts ("Board: ELTEC BAB7xx PReP\n");
 #else
-	puts("Board: ELTEC BAB7xx CHRP\n");
+	puts ("Board: ELTEC BAB7xx CHRP\n");
 #endif
-	return 0;
+	return (0);
 }
 
-int checkflash(void)
+/* ------------------------------------------------------------------------- */
+
+int checkflash (void)
 {
-	/* TODO */
-	printf("2 MB ## Test not implemented yet ##\n");
-	return 0;
+	/* TODO: XXX XXX XXX */
+	printf ("2 MB ## Test not implemented yet ##\n");
+	return (0);
 }
 
-static unsigned int mpc106_read_cfg_dword(unsigned int reg)
+/* ------------------------------------------------------------------------- */
+
+
+static unsigned int mpc106_read_cfg_dword (unsigned int reg)
 {
 	unsigned int reg_addr = MPC106_REG | (reg & 0xFFFFFFFC);
 
-	out32r(MPC106_REG_ADDR, reg_addr);
+	out32r (MPC106_REG_ADDR, reg_addr);
 
-	return in32r(MPC106_REG_DATA | (reg & 0x3));
+	return (in32r (MPC106_REG_DATA | (reg & 0x3)));
 }
 
-long int dram_size(int board_type)
+/* ------------------------------------------------------------------------- */
+
+long int dram_size (int board_type)
 {
-	/*
-	 * No actual initialisation to do - done when setting up
-	 * PICRs MCCRs ME/SARs etc in asm_init.S.
+	/* No actual initialisation to do - done when setting up
+	 * PICRs MCCRs ME/SARs etc in ram_init.S.
 	 */
+
 	register unsigned long i, msar1, mear1, memSize;
 
 #if defined(CONFIG_SYS_MEMTEST)
 	register unsigned long reg;
 
-	printf("Testing DRAM\n");
+	printf ("Testing DRAM\n");
 
-	/* write each mem addr with its address */
-	for (reg = CONFIG_SYS_MEMTEST_START; reg < CONFIG_SYS_MEMTEST_END;
-	     reg += 4)
+	/* write each mem addr with it's address */
+	for (reg = CONFIG_SYS_MEMTEST_START; reg < CONFIG_SYS_MEMTEST_END; reg += 4)
 		*reg = reg;
 
-	for (reg = CONFIG_SYS_MEMTEST_START; reg < CONFIG_SYS_MEMTEST_END;
-	     reg += 4) {
+	for (reg = CONFIG_SYS_MEMTEST_START; reg < CONFIG_SYS_MEMTEST_END; reg += 4) {
 		if (*reg != reg)
 			return -1;
 	}
@@ -127,94 +143,108 @@ long int dram_size(int board_type)
 
 	/*
 	 * Since MPC106 memory controller chip has already been set to
-	 * control all memory, just read and interpret its memory boundary register.
+	 * control all memory, just read and interpret its memory boundery register.
 	 */
 	memSize = 0;
-	msar1 = mpc106_read_cfg_dword(MPC106_MSAR1);
-	mear1 = mpc106_read_cfg_dword(MPC106_MEAR1);
-	i = mpc106_read_cfg_dword(MPC106_MBER) & 0xf;
+	msar1 = mpc106_read_cfg_dword (MPC106_MSAR1);
+	mear1 = mpc106_read_cfg_dword (MPC106_MEAR1);
+	i = mpc106_read_cfg_dword (MPC106_MBER) & 0xf;
 
 	do {
-		if (i & 0x01)
+		if (i & 0x01)	/* is bank enabled ? */
 			memSize += (mear1 & 0xff) - (msar1 & 0xff) + 1;
 		msar1 >>= 8;
 		mear1 >>= 8;
 		i >>= 1;
 	} while (i);
 
-	return memSize * 0x100000;
+	return (memSize * 0x100000);
 }
 
-phys_size_t initdram(int board_type)
+/* ------------------------------------------------------------------------- */
+
+phys_size_t initdram (int board_type)
 {
-	return dram_size(board_type);
+	return dram_size (board_type);
 }
 
-void after_reloc(ulong dest_addr)
+/* ------------------------------------------------------------------------- */
+
+void after_reloc (ulong dest_addr)
 {
 	/*
 	 * Jump to the main U-Boot board init code
 	 */
-	board_init_r((gd_t *)gd, dest_addr);
+	board_init_r ((gd_t *) gd, dest_addr);
 }
 
+/* ------------------------------------------------------------------------- */
+
 /*
- * do_reset is here because it is board specific. The 7xx CPUs can only be
- * reset by external hardware, which is the RTC on BAB7xx.
+ * do_reset is done here because in this case it is board specific, since the
+ * 7xx CPUs can only be reset by external HW (the RTC in this case).
  */
-int do_reset(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+void do_reset (cmd_tbl_t * cmdtp, bd_t * bd, int flag, int argc, char * const argv[])
 {
 #if defined(CONFIG_RTC_MK48T59)
 	/* trigger watchdog immediately */
-	rtc_set_watchdog(1, RTC_WD_RB_16TH);
+	rtc_set_watchdog (1, RTC_WD_RB_16TH);
 #else
 #error "You must define the macro CONFIG_RTC_MK48T59."
 #endif
-	return 0;
 }
+
+/* ------------------------------------------------------------------------- */
 
 #if defined(CONFIG_WATCHDOG)
 /*
  * Since the 7xx CPUs don't have an internal watchdog, this function is
- * board specific. We use the RTC here.
+ * board specific.  We use the RTC here.
  */
-void watchdog_reset(void)
+void watchdog_reset (void)
 {
 #if defined(CONFIG_RTC_MK48T59)
 	/* we use a 32 sec watchdog timer */
-	rtc_set_watchdog(8, RTC_WD_RB_4);
+	rtc_set_watchdog (8, RTC_WD_RB_4);
 #else
 #error "You must define the macro CONFIG_RTC_MK48T59."
 #endif
 }
-#endif
+#endif /* CONFIG_WATCHDOG */
+
+/* ------------------------------------------------------------------------- */
 
 #ifdef CONFIG_CONSOLE_EXTRA_INFO
 extern GraphicDevice smi;
 
-void video_get_info_str(int line_number, char *info)
+void video_get_info_str (int line_number, char *info)
 {
 	/* init video info strings for graphic console */
 	switch (line_number) {
 	case 1:
-		sprintf(info, " MPC7xx V%d.%d at %ld / %ld MHz",
-			(get_pvr() >> 8) & 0xFF, get_pvr() & 0xFF,
-			bab7xx_get_gclk_freq() / 1000000,
-			bab7xx_get_bus_freq() / 1000000);
+		sprintf (info, " MPC7xx V%d.%d at %ld / %ld MHz",
+			 (get_pvr () >> 8) & 0xFF,
+			 get_pvr () & 0xFF,
+			 bab7xx_get_gclk_freq () / 1000000,
+			 bab7xx_get_bus_freq () / 1000000);
 		return;
 	case 2:
-		sprintf(info, " ELTEC BAB7xx with %ld MB DRAM and %ld MB FLASH",
-			dram_size(0) / 0x100000, flash_init() / 0x100000);
+		sprintf (info,
+			 " ELTEC BAB7xx with %ld MB DRAM and %ld MB FLASH",
+			 dram_size (0) / 0x100000, flash_init () / 0x100000);
 		return;
 	case 3:
-		sprintf(info, " %s", smi.modeIdent);
+		sprintf (info, " %s", smi.modeIdent);
 		return;
 	}
 
 	/* no more info lines */
 	*info = 0;
+	return;
 }
 #endif
+
+/*---------------------------------------------------------------------------*/
 
 int board_eth_init(bd_t *bis)
 {

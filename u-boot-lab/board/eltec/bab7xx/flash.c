@@ -200,8 +200,6 @@ ulong flash_get_size (vu_long *addr, flash_info_t *info)
     printf("flash_get_size for address 0x%lx: \n", (unsigned long)caddr);
 #endif
 
-    printf("DBG: flash_get_size base=%08lx\n", base);
-
     /* Write auto select command: read Manufacturer ID */
     caddr[0] = 0xF0;   /* reset bank */
     udelay(10);
@@ -225,17 +223,12 @@ ulong flash_get_size (vu_long *addr, flash_info_t *info)
     vendor &= 0xff;
     devid &= 0xff;
 
-    printf("DBG: flash ids base=%08lx vendor=%02lx devid=%02lx\n",
-	   base, vendor, devid);
-
     /* We accept only two AMD types */
     switch (vendor) {
     case (FLASH_WORD_SIZE)AMD_MANUFACT:
 	info->flash_id = FLASH_MAN_AMD;
 	break;
     default:
-	printf("DBG: flash unknown vendor base=%08lx vendor=%02lx devid=%02lx\n",
-	       base, vendor, devid);
 	info->flash_id = FLASH_UNKNOWN;
 	info->sector_count = 0;
 	info->size = 0;
@@ -262,15 +255,14 @@ ulong flash_get_size (vu_long *addr, flash_info_t *info)
 	break;              /* => 4 MB      */
 
     default:
-	printf("DBG: flash unknown devid base=%08lx vendor=%02lx devid=%02lx\n",
-	       base, vendor, devid);
 	info->flash_id = FLASH_UNKNOWN;
 	return (0);         /* => no or unknown flash */
 
     }
 
-    printf("DBG: flash recognized base=%08lx id=%08lx sectors=%d size=%08lx\n",
-	   base, info->flash_id, info->sector_count, info->size);
+#ifdef DEBUG
+    printf("flash id 0x%lx; sector count 0x%x, size 0x%lx\n", info->flash_id, info->sector_count, info->size);
+#endif
 
     /* check for protected sectors */
     for (i = 0; i < info->sector_count; i++) {

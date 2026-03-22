@@ -47,29 +47,26 @@ phys_addr_t addrmap_virt_to_phys(void * vaddr)
 	return (phys_addr_t)(~0);
 }
 
-void *addrmap_phys_to_virt(phys_addr_t paddr)
+unsigned long addrmap_phys_to_virt(phys_addr_t paddr)
 {
 	int i;
 
 	for (i = 0; i < CONFIG_SYS_NUM_ADDR_MAP; i++) {
-		phys_addr_t base, upper;
+		u64 base, upper, addr;
 
 		if (address_map[i].size == 0)
 			continue;
 
-		base = address_map[i].paddr;
-		upper = address_map[i].size + base - 1;
+		addr = (u64)paddr;
+		base = (u64)(address_map[i].paddr);
+		upper = (u64)(address_map[i].size) + base - 1;
 
-		if (paddr >= base && paddr <= upper) {
-			phys_addr_t offset;
-
-			offset = address_map[i].paddr - address_map[i].vaddr;
-
-			return (void *)(unsigned long)(paddr - offset);
+		if (addr >= base && addr <= upper) {
+			return paddr - address_map[i].paddr + address_map[i].vaddr;
 		}
 	}
 
-	return (void *)(~0);
+	return (unsigned long)(~0);
 }
 
 void addrmap_set_entry(unsigned long vaddr, phys_addr_t paddr,

@@ -53,7 +53,7 @@ static TSI148_DEV *dev;
 
 int tsi148_init(void)
 {
-	int j, result;
+	int j, result, lastError = 0;
 	pci_dev_t busdevfn;
 	unsigned int val;
 
@@ -69,7 +69,8 @@ int tsi148_init(void)
 	dev = malloc(sizeof(*dev));
 	if (NULL == dev) {
 		puts("Tsi148: No memory!\n");
-		return -1;
+		result = -1;
+		goto break_20;
 	}
 
 	memset(dev, 0, sizeof(*dev));
@@ -138,6 +139,8 @@ int tsi148_init(void)
  break_30:
 	free(dev);
 	dev = NULL;
+ break_20:
+	lastError = result;
 
 	return result;
 }
@@ -416,7 +419,7 @@ int do_tsi148(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	if (argc > 5)
 		vam = simple_strtoul(argv[5], NULL, 16);
 	if (argc > 6)
-		vdw = simple_strtoul(argv[6], NULL, 16);
+		vdw = simple_strtoul(argv[7], NULL, 16);
 
 	switch (cmd) {
 	case 'c':
@@ -462,7 +465,7 @@ int do_tsi148(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 }
 
 U_BOOT_CMD(
-	tsi148,	7,	1,	do_tsi148,
+	tsi148,	8,	1,	do_tsi148,
 	"initialize and configure Turndra Tsi148\n",
 	"init\n"
 	"    - initialize tsi148\n"

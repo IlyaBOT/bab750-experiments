@@ -12,7 +12,7 @@
 #
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	See the
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
@@ -23,28 +23,25 @@
 
 include $(TOPDIR)/config.mk
 
-HOSTSRCS := $(SRCTREE)/lib/crc32.c  fw_env.c  fw_env_main.c
+SRCS	:= $(obj)crc32.c  fw_env.c  fw_env_main.c
 HEADERS	:= fw_env.h
 
-# Compile for a hosted environment on the target
-HOSTCPPFLAGS  = -idirafter $(SRCTREE)/include \
-		-idirafter $(OBJTREE)/include2 \
-		-idirafter $(OBJTREE)/include \
-		-DUSE_HOSTCC
+CPPFLAGS := -Wall -DUSE_HOSTCC -I$(SRCTREE)/include
 
 ifeq ($(MTD_VERSION),old)
-HOSTCPPFLAGS += -DMTD_OLD
+CPPFLAGS += -DMTD_OLD
 endif
 
 all:	$(obj)fw_printenv
 
-# Some files complain if compiled with -pedantic, use HOSTCFLAGS_NOPED
-$(obj)fw_printenv:	$(HOSTSRCS) $(HEADERS)
-	$(HOSTCC) $(HOSTCFLAGS_NOPED) $(HOSTLDFLAGS) -o $@ $(HOSTSRCS)
-	$(HOSTSTRIP) $@
+$(obj)fw_printenv:	$(SRCS) $(HEADERS)
+	$(CROSS_COMPILE)gcc $(CPPFLAGS) $(SRCS) -o $(obj)fw_printenv
 
 clean:
-	rm -f $(obj)fw_printenv
+	rm -f $(obj)fw_printenv $(obj)crc32.c
+
+$(obj)crc32.c:
+	ln -s $(src)../../lib/crc32.c $(obj)crc32.c
 
 #########################################################################
 

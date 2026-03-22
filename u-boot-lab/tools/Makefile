@@ -24,68 +24,49 @@
 TOOLSUBDIRS =
 
 #
-# Include this after HOSTOS HOSTARCH check
-# so that we can act intelligently.
+# toolchains targeting win32 generate .exe files
 #
-include $(TOPDIR)/config.mk
-
-#
-# Toolchains targeting Windows generate .exe files. Match actual preprocessor
-# macros instead of substrings like TARGET_OS_WIN32 0 from Apple Clang.
-#
-HOSTCC_WIN32 := $(shell $(HOSTCC) -E -dM -xc /dev/null | awk '{print $$2}' | \
-	grep -Eq '^(_WIN32|__WIN32__|__CYGWIN__|__MINGW32__|__MINGW64__)$$' && echo y)
-ifneq ($(HOSTCC_WIN32),)
+ifneq (,$(findstring WIN32 ,$(shell $(HOSTCC) -E -dM -xc /dev/null)))
 SFX = .exe
 else
 SFX =
 endif
 
+#
+# Include this after HOSTOS HOSTARCH check
+# so that we can act intelligently.
+#
+include $(TOPDIR)/config.mk
+
 # Enable all the config-independent tools
 ifneq ($(HOST_TOOLS_ALL),)
 CONFIG_LCD_LOGO = y
-CONFIG_CMD_LOADS = y
 CONFIG_CMD_NET = y
-CONFIG_XWAY_SWAP_BYTES = y
+CONFIG_INCA_IP = y
 CONFIG_NETCONSOLE = y
 CONFIG_SHA1_CHECK_UB_IMG = y
 endif
 
-# Merge all the different vars for envcrc into one
-ENVCRC-$(CONFIG_ENV_IS_EMBEDDED) = y
-ENVCRC-$(CONFIG_ENV_IS_IN_DATAFLASH) = y
-ENVCRC-$(CONFIG_ENV_IS_IN_EEPROM) = y
-ENVCRC-$(CONFIG_ENV_IS_IN_FLASH) = y
-ENVCRC-$(CONFIG_ENV_IS_IN_ONENAND) = y
-ENVCRC-$(CONFIG_ENV_IS_IN_NAND) = y
-ENVCRC-$(CONFIG_ENV_IS_IN_NVRAM) = y
-ENVCRC-$(CONFIG_ENV_IS_IN_SPI_FLASH) = y
-CONFIG_BUILD_ENVCRC ?= $(ENVCRC-y)
-
 # Generated executable files
 BIN_FILES-$(CONFIG_LCD_LOGO) += bmp_logo$(SFX)
 BIN_FILES-$(CONFIG_VIDEO_LOGO) += bmp_logo$(SFX)
-BIN_FILES-$(CONFIG_BUILD_ENVCRC) += envcrc$(SFX)
+BIN_FILES-$(CONFIG_ENV_IS_EMBEDDED) += envcrc$(SFX)
+BIN_FILES-$(CONFIG_ENV_IS_IN_DATAFLASH) += envcrc$(SFX)
+BIN_FILES-$(CONFIG_ENV_IS_IN_EEPROM) += envcrc$(SFX)
+BIN_FILES-$(CONFIG_ENV_IS_IN_FLASH) += envcrc$(SFX)
+BIN_FILES-$(CONFIG_ENV_IS_IN_ONENAND) += envcrc$(SFX)
+BIN_FILES-$(CONFIG_ENV_IS_IN_NAND) += envcrc$(SFX)
+BIN_FILES-$(CONFIG_ENV_IS_IN_NVRAM) += envcrc$(SFX)
+BIN_FILES-$(CONFIG_ENV_IS_IN_SPI_FLASH) += envcrc$(SFX)
 BIN_FILES-$(CONFIG_CMD_NET) += gen_eth_addr$(SFX)
 BIN_FILES-$(CONFIG_CMD_LOADS) += img2srec$(SFX)
-BIN_FILES-$(CONFIG_XWAY_SWAP_BYTES) += xway-swap-bytes$(SFX)
-BIN_FILES-y += mkenvimage$(SFX)
+BIN_FILES-$(CONFIG_INCA_IP) += inca-swap-bytes$(SFX)
 BIN_FILES-y += mkimage$(SFX)
-BIN_FILES-$(CONFIG_MACH_SMDK5250) += mksmdk5250spl$(SFX)
-BIN_FILES-$(CONFIG_MACH_SMDK5420) += mksmdk5420spl$(SFX)
-BIN_FILES-$(CONFIG_MACH_SMDK5422) += mksmdk5422spl$(SFX)
-BIN_FILES-$(CONFIG_MACH_UNIVERSAL5422) += mksmdk5422spl$(SFX)
-BIN_FILES-$(CONFIG_MACH_XYREF5422) += mksmdk5422spl$(SFX)
-BIN_FILES-$(CONFIG_SMDK5410) += mksmdk5410spl$(SFX)
-BIN_FILES-$(CONFIG_EXYNOS4412) += mksmdk4x12spl$(SFX)
-BIN_FILES-$(CONFIG_EXYNOS4212) += mksmdk4x12spl$(SFX)
-BIN_FILES-$(CONFIG_MX28) += mxsboot$(SFX)
 BIN_FILES-$(CONFIG_NETCONSOLE) += ncb$(SFX)
 BIN_FILES-$(CONFIG_SHA1_CHECK_UB_IMG) += ubsha1$(SFX)
-BIN_FILES-$(CONFIG_KIRKWOOD) += kwboot$(SFX)
 
 # Source files which exist outside the tools directory
-EXT_OBJ_FILES-$(CONFIG_BUILD_ENVCRC) += common/env_embedded.o
+EXT_OBJ_FILES-y += common/env_embedded.o
 EXT_OBJ_FILES-y += common/image.o
 EXT_OBJ_FILES-y += lib/crc32.o
 EXT_OBJ_FILES-y += lib/md5.o
@@ -95,31 +76,17 @@ EXT_OBJ_FILES-y += lib/sha1.o
 OBJ_FILES-$(CONFIG_LCD_LOGO) += bmp_logo.o
 OBJ_FILES-$(CONFIG_VIDEO_LOGO) += bmp_logo.o
 NOPED_OBJ_FILES-y += default_image.o
-OBJ_FILES-$(CONFIG_BUILD_ENVCRC) += envcrc.o
+OBJ_FILES-y += envcrc.o
 NOPED_OBJ_FILES-y += fit_image.o
 OBJ_FILES-$(CONFIG_CMD_NET) += gen_eth_addr.o
 OBJ_FILES-$(CONFIG_CMD_LOADS) += img2srec.o
-OBJ_FILES-$(CONFIG_XWAY_SWAP_BYTES) += xway-swap-bytes.o
-NOPED_OBJ_FILES-y += aisimage.o
+OBJ_FILES-$(CONFIG_INCA_IP) += inca-swap-bytes.o
 NOPED_OBJ_FILES-y += kwbimage.o
 NOPED_OBJ_FILES-y += imximage.o
-NOPED_OBJ_FILES-y += omapimage.o
-NOPED_OBJ_FILES-y += mkenvimage.o
 NOPED_OBJ_FILES-y += mkimage.o
-OBJ_FILES-$(CONFIG_MACH_SMDK5250) += mkexynosspl.o
-OBJ_FILES-$(CONFIG_MACH_SMDK5420) += mkexynosspl.o
-OBJ_FILES-$(CONFIG_MACH_SMDK5422) += mkexynosspl.o
-OBJ_FILES-$(CONFIG_MACH_UNIVERSAL5422) += mkexynosspl.o
-OBJ_FILES-$(CONFIG_MACH_XYREF5422) += mkexynosspl.o
-OBJ_FILES-$(CONFIG_SMDK5410) += mkexynosspl.o
-OBJ_FILES-$(CONFIG_EXYNOS4412) += mkexynosspl.o
-OBJ_FILES-$(CONFIG_EXYNOS4212) += mkexynosspl.o
-OBJ_FILES-$(CONFIG_MX28) += mxsboot.o
 OBJ_FILES-$(CONFIG_NETCONSOLE) += ncb.o
 NOPED_OBJ_FILES-y += os_support.o
 OBJ_FILES-$(CONFIG_SHA1_CHECK_UB_IMG) += ubsha1.o
-NOPED_OBJ_FILES-y += ublimage.o
-OBJ_FILES-$(CONFIG_KIRKWOOD) += kwboot.o
 
 # Don't build by default
 #ifeq ($(ARCH),ppc)
@@ -136,11 +103,8 @@ LIBFDT_OBJ_FILES-y += fdt_wip.o
 
 # Generated LCD/video logo
 LOGO_H = $(OBJTREE)/include/bmp_logo.h
-LOGO_DATA_H = $(OBJTREE)/include/bmp_logo_data.h
 LOGO-$(CONFIG_LCD_LOGO) += $(LOGO_H)
-LOGO-$(CONFIG_LCD_LOGO) += $(LOGO_DATA_H)
 LOGO-$(CONFIG_VIDEO_LOGO) += $(LOGO_H)
-LOGO-$(CONFIG_VIDEO_LOGO) += $(LOGO_DATA_H)
 
 ifeq ($(LOGO_BMP),)
 LOGO_BMP= logos/denx.bmp
@@ -151,17 +115,8 @@ endif
 ifeq ($(VENDOR),esd)
 LOGO_BMP= logos/esd.bmp
 endif
-ifeq ($(VENDOR),freescale)
-LOGO_BMP= logos/freescale.bmp
-endif
 ifeq ($(VENDOR),ronetix)
 LOGO_BMP= logos/ronetix.bmp
-endif
-ifeq ($(VENDOR),syteco)
-LOGO_BMP= logos/syteco.bmp
-endif
-ifeq ($(VENDOR),intercontrol)
-LOGO_BMP= logos/intercontrol.bmp
 endif
 
 # now $(obj) is defined
@@ -183,8 +138,7 @@ HOSTCPPFLAGS =	-idirafter $(SRCTREE)/include \
 		-idirafter $(OBJTREE)/include \
 	        -I $(SRCTREE)/lib/libfdt \
 		-I $(SRCTREE)/tools \
-		-DCONFIG_SYS_TEXT_BASE=$(CONFIG_SYS_TEXT_BASE) \
-		-DUSE_HOSTCC \
+		-DTEXT_BASE=$(TEXT_BASE) -DUSE_HOSTCC \
 		-D__KERNEL_STRICT_NAMES
 
 
@@ -209,17 +163,11 @@ $(obj)img2srec$(SFX):	$(obj)img2srec.o
 	$(HOSTCC) $(HOSTCFLAGS) $(HOSTLDFLAGS) -o $@ $^
 	$(HOSTSTRIP) $@
 
-$(obj)xway-swap-bytes$(SFX):	$(obj)xway-swap-bytes.o
+$(obj)inca-swap-bytes$(SFX):	$(obj)inca-swap-bytes.o
 	$(HOSTCC) $(HOSTCFLAGS) $(HOSTLDFLAGS) -o $@ $^
 	$(HOSTSTRIP) $@
 
-$(obj)mkenvimage$(SFX):	$(obj)crc32.o $(obj)mkenvimage.o \
-	$(obj)os_support.o
-	$(HOSTCC) $(HOSTCFLAGS) $(HOSTLDFLAGS) -o $@ $^
-	$(HOSTSTRIP) $@
-
-$(obj)mkimage$(SFX):	$(obj)aisimage.o \
-			$(obj)crc32.o \
+$(obj)mkimage$(SFX):	$(obj)crc32.o \
 			$(obj)default_image.o \
 			$(obj)fit_image.o \
 			$(obj)image.o \
@@ -228,22 +176,12 @@ $(obj)mkimage$(SFX):	$(obj)aisimage.o \
 			$(obj)md5.o \
 			$(obj)mkimage.o \
 			$(obj)os_support.o \
-			$(obj)omapimage.o \
 			$(obj)sha1.o \
-			$(obj)ublimage.o \
 			$(LIBFDT_OBJS)
 	$(HOSTCC) $(HOSTCFLAGS) $(HOSTLDFLAGS) -o $@ $^
 	$(HOSTSTRIP) $@
 
-$(obj)mk$(BOARD)spl$(SFX):	$(obj)mkexynosspl.o
-	$(HOSTCC) $(HOSTCFLAGS) $(HOSTLDFLAGS) -o $@ $^
-	$(HOSTSTRIP) $@
-
 $(obj)mpc86x_clk$(SFX):	$(obj)mpc86x_clk.o
-	$(HOSTCC) $(HOSTCFLAGS) $(HOSTLDFLAGS) -o $@ $^
-	$(HOSTSTRIP) $@
-
-$(obj)mxsboot$(SFX):	$(obj)mxsboot.o
 	$(HOSTCC) $(HOSTCFLAGS) $(HOSTLDFLAGS) -o $@ $^
 	$(HOSTSTRIP) $@
 
@@ -253,10 +191,6 @@ $(obj)ncb$(SFX):	$(obj)ncb.o
 
 $(obj)ubsha1$(SFX):	$(obj)os_support.o $(obj)sha1.o $(obj)ubsha1.o
 	$(HOSTCC) $(HOSTCFLAGS) $(HOSTLDFLAGS) -o $@ $^
-
-$(obj)kwboot$(SFX): $(obj)kwboot.o
-	$(HOSTCC) $(HOSTCFLAGS) $(HOSTLDFLAGS) -o $@ $^
-	$(HOSTSTRIP) $@
 
 # Some of the tool objects need to be accessed from outside the tools directory
 $(obj)%.o: $(SRCTREE)/common/%.c
@@ -280,11 +214,8 @@ else
 	done
 endif
 
-$(LOGO_H):	$(obj)bmp_logo$(SFX) $(LOGO_BMP)
-	$(obj)./bmp_logo$(SFX) --gen-info $(LOGO_BMP) > $@
-
-$(LOGO_DATA_H):	$(obj)bmp_logo$(SFX) $(LOGO_BMP)
-	$(obj)./bmp_logo$(SFX) --gen-data $(LOGO_BMP) > $@
+$(LOGO_H):	$(obj)bmp_logo $(LOGO_BMP)
+	$(obj)./bmp_logo $(LOGO_BMP) >$@
 
 #########################################################################
 

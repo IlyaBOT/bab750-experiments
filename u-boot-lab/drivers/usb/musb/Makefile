@@ -23,7 +23,7 @@
 
 include $(TOPDIR)/config.mk
 
-LIB	:= $(obj)libusb_musb.o
+LIB	:= $(obj)libusb_musb.a
 
 COBJS-$(CONFIG_MUSB_HCD) += musb_hcd.o musb_core.o
 COBJS-$(CONFIG_MUSB_UDC) += musb_udc.o musb_core.o
@@ -40,7 +40,7 @@ OBJS	:= $(addprefix $(obj),$(COBJS))
 all:	$(LIB)
 
 $(LIB):	$(obj).depend $(OBJS)
-	$(call cmd_link_o_target, $(OBJS))
+	$(AR) $(ARFLAGS) $@ $(OBJS)
 
 #########################################################################
 

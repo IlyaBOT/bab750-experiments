@@ -32,9 +32,9 @@
  *  board_init lies at a quite high address and when the cpu has
  *  jumped there, everything is ok.
  */
-#include <asm-offsets.h>
 #include <config.h>
 #include <74xx_7xx.h>
+#include <timestamp.h>
 #include <version.h>
 
 #include <ppc_asm.tmpl>
@@ -42,13 +42,16 @@
 
 #include <asm/cache.h>
 #include <asm/mmu.h>
-#include <asm/u-boot.h>
 
 #if !defined(CONFIG_DB64360) && \
     !defined(CONFIG_DB64460) && \
     !defined(CONFIG_CPCI750) && \
     !defined(CONFIG_P3Mx)
 #include <galileo/gt64260R.h>
+#endif
+
+#ifndef  CONFIG_IDENT_STRING
+#define  CONFIG_IDENT_STRING ""
 #endif
 
 /* We don't want the  MMU yet.
@@ -63,7 +66,6 @@
  * Use r12 to access the GOT
  */
 	START_GOT
-	GOT_ENTRY(_GOT_TABLE_)
 	GOT_ENTRY(_GOT2_TABLE_)
 	GOT_ENTRY(_FIXUP_TABLE_)
 
@@ -73,7 +75,7 @@
 	GOT_ENTRY(transfer_to_handler)
 
 	GOT_ENTRY(__init_end)
-	GOT_ENTRY(__bss_end__)
+	GOT_ENTRY(_end)
 	GOT_ENTRY(__bss_start)
 	END_GOT
 
@@ -85,12 +87,24 @@
 	.long	0x27051956		/* U-Boot Magic Number		*/
 	.globl	version_string
 version_string:
-	.ascii U_BOOT_VERSION_STRING, "\0"
+	.ascii	U_BOOT_VERSION
+	.ascii	" (", U_BOOT_DATE, " - ", U_BOOT_TIME, ")"
+	.ascii	CONFIG_IDENT_STRING, "\0"
 
 	. = EXC_OFF_SYS_RESET
 	.globl	_start
 _start:
+	li	r21, BOOTFLAG_COLD	/* Normal Power-On: Boot from FLASH */
 	b	boot_cold
+	sync
+
+	. = EXC_OFF_SYS_RESET + 0x10
+
+	.globl	_start_warm
+_start_warm:
+	li	r21, BOOTFLAG_WARM	/* Software reboot		*/
+	b	boot_warm
+	sync
 
 	/* the boot code is located below the exception table */
 
@@ -174,6 +188,7 @@ _end_of_vectors:
 	. = 0x2000
 
 boot_cold:
+boot_warm:
 	/* disable everything */
 	li	r0, 0
 	mtspr	HID0, r0
@@ -273,11 +288,14 @@ in_flash:
 	bl	cpu_init_f
 	sync
 
+	mr	r3, r21
+
+	/* r3: BOOTFLAG */
 	/* run 1st part of board init code (from Flash)   */
 	bl	board_init_f
 	sync
 
-	/* NOTREACHED - board_init_f() does not return */
+	/* NOTREACHED */
 
 	.globl	invalidate_bats
 invalidate_bats:
@@ -563,31 +581,6 @@ get_pvr:
 	mfspr	r3, PVR
 	blr
 
-	.macro RELOC_TRACE c1, c2
-	li	r3, \c1
-	bl	raw_serial_putc
-	li	r3, \c2
-	bl	raw_serial_putc
-	li	r3, 0x0d
-	bl	raw_serial_putc
-	li	r3, 0x0a
-	bl	raw_serial_putc
-	.endm
-
-raw_serial_putc:
-	lis	r27, 0xfe0003f8@h
-	ori	r27, r27, 0xfe0003f8@l
-1:
-	sync
-	lbz	r28, 5(r27)
-	twi	0, r28, 0
-	isync
-	andi.	r28, r28, 0x20
-	beq	1b
-	sync
-	stb	r3, 0(r27)
-	blr
-
 /*-----------------------------------------------------------------------*/
 /*
  * void relocate_code (addr_sp, gd, addr_moni)
@@ -602,15 +595,9 @@ raw_serial_putc:
  */
 	.globl	relocate_code
 relocate_code:
-	mr	r7,  r3		/* Save stack pointer arg before tracing	*/
-	mr	r8,  r4		/* Save global data arg before tracing	*/
-	mr	r11, r5		/* Save destination arg before tracing	*/
-	RELOC_TRACE 0x52, 0x30
-	mr	r1,  r7		/* Set new stack pointer		*/
-	mr	r9,  r8		/* Save copy of Global Data pointer	*/
-	mr	r10, r11		/* Save copy of Destination Address	*/
-
-	RELOC_TRACE 0x52, 0x31
+	mr	r1,  r3		/* Set new stack pointer		*/
+	mr	r9,  r4		/* Save copy of Global Data pointer	*/
+	mr	r10, r5		/* Save copy of Destination Address	*/
 
 	GET_GOT
 	mr	r3,  r5				/* Destination Address	*/
@@ -691,7 +678,6 @@ relocate_code:
 	blt	6b
 7:	sync			/* Wait for all icbi to complete on bus	*/
 	isync
-	RELOC_TRACE 0x52, 0x32
 
 /*
  * We are done. Do not return, instead branch to second part of board
@@ -702,49 +688,27 @@ relocate_code:
 	blr
 
 in_ram:
-	RELOC_TRACE 0x52, 0x33
 #ifdef CONFIG_ECC
 	bl	board_init_ecc
 #endif
 	/*
-	 * Relocation Function, r12 points to got2+0x8000.
+	 * Relocation Function, r12 point to got2+0x8000
 	 *
-	 * This board linker script keeps linker-generated .got entries before
-	 * the assembly .got2 table, so relocate .got and .got2 separately using
-	 * the same relocation delta.
+	 * Adjust got2 pointers, no need to check for 0, this code
+	 * already puts a few entries in the table.
 	 */
-	la	r3,GOT(_GOT2_TABLE_)
-	lwz	r11,GOT(_GOT2_TABLE_)
-	sub	r11,r3,r11
-
-	li	r0,__got_entries@sectoff@l
-	lwz	r3,GOT(_GOT_TABLE_)
-	cmpwi	r0,0
-	mtctr	r0
-	add	r3,r3,r11
-	addi	r3,r3,-4
-	beq	2f
-1:	lwzu	r4,4(r3)
-	cmpwi	r4,0
-	beq-	3f
-	add	r4,r4,r11
-	stw	r4,0(r3)
-3:	bdnz	1b
-2:
 	li	r0,__got2_entries@sectoff@l
 	la	r3,GOT(_GOT2_TABLE_)
-	cmpwi	r0,0
+	lwz	r11,GOT(_GOT2_TABLE_)
 	mtctr	r0
+	sub	r11,r3,r11
 	addi	r3,r3,-4
-	beq	5f
-4:	lwzu	r0,4(r3)
+1:	lwzu	r0,4(r3)
 	cmpwi	r0,0
-	beq-	6f
+	beq-	2f
 	add	r0,r0,r11
 	stw	r0,0(r3)
-6:	bdnz	4b
-5:
-	RELOC_TRACE 0x52, 0x34
+2:	bdnz	1b
 
 	/*
 	 * Now adjust the fixups and the pointers to the fixups
@@ -755,22 +719,20 @@ in_ram:
 	cmpwi	r0,0
 	mtctr	r0
 	addi	r3,r3,-4
-	beq	8f
-7:	lwzu	r4,4(r3)
+	beq	4f
+3:	lwzu	r4,4(r3)
 	lwzux	r0,r4,r11
-	cmpwi	r0,0
 	add	r0,r0,r11
-	stw	r4,0(r3)
-	beq-	9f
+	stw	r10,0(r3)
 	stw	r0,0(r4)
-9:	bdnz	7b
-8:
+	bdnz	3b
+4:
 /* clear_bss: */
 	/*
 	 * Now clear BSS segment
 	 */
 	lwz	r3,GOT(__bss_start)
-	lwz	r4,GOT(__bss_end__)
+	lwz	r4,GOT(_end)
 
 	cmplw	0, r3, r4
 	beq	6f
@@ -782,7 +744,6 @@ in_ram:
 	cmplw	0, r3, r4
 	bne	5b
 6:
-	RELOC_TRACE 0x52, 0x35
 	mr	r3, r10		/* Destination Address		*/
 #if defined(CONFIG_DB64360)	|| \
     defined(CONFIG_DB64460)     || \
@@ -869,7 +830,7 @@ lock_ram_in_cache:
 	 */
 	lis	r3, (CONFIG_SYS_INIT_RAM_ADDR & ~31)@h
 	ori	r3, r3, (CONFIG_SYS_INIT_RAM_ADDR & ~31)@l
-	li	r4, ((CONFIG_SYS_INIT_RAM_SIZE & ~31) + \
+	li	r4, ((CONFIG_SYS_INIT_RAM_END & ~31) + \
 		     (CONFIG_SYS_INIT_RAM_ADDR & 31) + 31) / 32
 	mtctr	r4
 1:
@@ -890,7 +851,7 @@ unlock_ram_in_cache:
 	/* invalidate the INIT_RAM section */
 	lis	r3, (CONFIG_SYS_INIT_RAM_ADDR & ~31)@h
 	ori	r3, r3, (CONFIG_SYS_INIT_RAM_ADDR & ~31)@l
-	li	r4, ((CONFIG_SYS_INIT_RAM_SIZE & ~31) + \
+	li	r4, ((CONFIG_SYS_INIT_RAM_END & ~31) + \
 		     (CONFIG_SYS_INIT_RAM_ADDR & 31) + 31) / 32
 	mtctr	r4
 1:	icbi	r0, r3

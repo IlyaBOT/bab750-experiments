@@ -23,11 +23,10 @@
 
 include $(TOPDIR)/config.mk
 
-LIB	:= $(obj)libpci.o
+LIB	:= $(obj)libpci.a
 
 COBJS-$(CONFIG_FSL_PCI_INIT) += fsl_pci_init.o
 COBJS-$(CONFIG_PCI) += pci.o pci_auto.o pci_indirect.o
-COBJS-$(CONFIG_FTPCI100) += pci_ftpci100.o
 COBJS-$(CONFIG_IXP_PCI) += pci_ixp.o
 COBJS-$(CONFIG_SH4_PCI) += pci_sh4.o
 COBJS-$(CONFIG_SH7751_PCI) +=pci_sh7751.o
@@ -42,7 +41,7 @@ OBJS	:= $(addprefix $(obj),$(COBJS))
 all:	$(LIB)
 
 $(LIB):	$(obj).depend $(OBJS)
-	$(call cmd_link_o_target, $(OBJS))
+	$(AR) $(ARFLAGS) $@ $(OBJS)
 
 #########################################################################
 

@@ -23,12 +23,13 @@
 
 #include <config.h>
 #include <common.h>
-#include <version.h>
 #include <linux/ctype.h>
 #include <asm/io.h>
 
 int display_options (void)
 {
+	extern char version_string[];
+
 #if defined(BUILD_TAG)
 	printf ("\n\n%s, Build: %s\n\n", version_string, BUILD_TAG);
 #else
@@ -100,12 +101,10 @@ void print_size(unsigned long long size, const char *s)
 #define DEFAULT_LINE_LENGTH_BYTES (16)
 int print_buffer (ulong addr, void* data, uint width, uint count, uint linelen)
 {
-	/* linebuf as a union causes proper alignment */
-	union linebuf {
-		uint32_t ui[MAX_LINE_LENGTH_BYTES/sizeof(uint32_t) + 1];
-		uint16_t us[MAX_LINE_LENGTH_BYTES/sizeof(uint16_t) + 1];
-		uint8_t  uc[MAX_LINE_LENGTH_BYTES/sizeof(uint8_t) + 1];
-	} lb;
+	uint8_t linebuf[MAX_LINE_LENGTH_BYTES + 1];
+	uint32_t *uip = (void*)linebuf;
+	uint16_t *usp = (void*)linebuf;
+	uint8_t *ucp = (void*)linebuf;
 	int i;
 
 	if (linelen*width > MAX_LINE_LENGTH_BYTES)
@@ -124,22 +123,21 @@ int print_buffer (ulong addr, void* data, uint width, uint count, uint linelen)
 		for (i = 0; i < linelen; i++) {
 			uint32_t x;
 			if (width == 4)
-				x = lb.ui[i] = *(volatile uint32_t *)data;
+				x = uip[i] = *(volatile uint32_t *)data;
 			else if (width == 2)
-				x = lb.us[i] = *(volatile uint16_t *)data;
+				x = usp[i] = *(volatile uint16_t *)data;
 			else
-				x = lb.uc[i] = *(volatile uint8_t *)data;
+				x = ucp[i] = *(volatile uint8_t *)data;
 			printf(" %0*x", width * 2, x);
 			data += width;
 		}
 
 		/* Print data in ASCII characters */
-		for (i = 0; i < linelen * width; i++) {
-			if (!isprint(lb.uc[i]) || lb.uc[i] >= 0x80)
-				lb.uc[i] = '.';
-		}
-		lb.uc[i] = '\0';
-		printf("    %s\n", lb.uc);
+		for (i = 0; i < linelen * width; i++)
+			if (!isprint(ucp[i]) || ucp[i] >= 0x80)
+				ucp[i] = '.';
+		ucp[i] = '\0';
+		printf("    %s\n", ucp);
 
 		/* update references */
 		addr += linelen * width;

@@ -824,7 +824,7 @@ out_free:
  * through mounting (error path cleanup function). So it has to make sure the
  * resource was actually allocated before freeing it.
  */
-void ubifs_umount(struct ubifs_info *c)
+static void ubifs_umount(struct ubifs_info *c)
 {
 	dbg_gen("un-mounting UBI device %d, volume %d", c->vi.ubi_num,
 		c->vi.vol_id);
@@ -848,10 +848,8 @@ void ubifs_umount(struct ubifs_info *c)
 	ubifs_debugging_exit(c);
 
 	/* Finally free U-Boot's global copy of superblock */
-	if (ubifs_sb != NULL) {
-		free(ubifs_sb->s_fs_info);
-		free(ubifs_sb);
-	}
+	free(ubifs_sb->s_fs_info);
+	free(ubifs_sb);
 }
 
 /**

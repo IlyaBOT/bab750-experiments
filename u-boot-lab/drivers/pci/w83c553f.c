@@ -42,9 +42,7 @@
 			out_be16((u16*) (addr),(val)); udelay(1); \
 			} while (0)
 
-#ifdef CONFIG_CMD_IDE
 extern uint ide_bus_offset[CONFIG_SYS_IDE_MAXBUS];
-#endif
 
 void initialise_pic(void);
 void initialise_dma(void);
@@ -90,7 +88,6 @@ void initialise_w83c553f(void)
 	pci_write_config_byte(devbusfn, WINBOND_IDEIRCR, 0x90);
 	pci_write_config_word(devbusfn, WINBOND_PCIIRCR, 0xABEF);
 
-#ifdef CONFIG_CMD_IDE
 	/*
 	 * Read IDE bus offsets from function 1 device.
 	 * We must unmask the LSB indicating that ist is an IO address.
@@ -119,7 +116,6 @@ void initialise_w83c553f(void)
 	pci_read_config_word(devbusfn, PCI_COMMAND, &reg16);
 	reg16 |= PCI_COMMAND_MASTER | PCI_COMMAND_IO;
 	pci_write_config_word(devbusfn, PCI_COMMAND, reg16);
-#endif
 
 	/*
 	 * Initialise ISA interrupt controller

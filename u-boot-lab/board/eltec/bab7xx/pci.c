@@ -39,8 +39,6 @@ void pci_init_board(void)
     u32 reg32;
     u16 reg16;
 
-    puts("DBG: pci_init_board enter\n");
-
     hose->first_busno = 0;
     hose->last_busno = 0xff;
 
@@ -87,17 +85,12 @@ void pci_init_board(void)
     pci_setup_indirect(hose,
 	MPC106_REG_ADDR,
 	MPC106_REG_DATA);
-    puts("DBG: pci_setup_indirect done\n");
 
     pci_register_hose(hose);
-    puts("DBG: pci_register_hose done\n");
 
-    puts("DBG: before pci_hose_scan\n");
     hose->last_busno = pci_hose_scan(hose);
-    printf("DBG: after pci_hose_scan last_bus=%d\n", hose->last_busno);
 
     /* Initialises the MPC10x PCI Configuration regs. */
-    puts("DBG: before host bridge config\n");
     pci_read_config_dword (PCI_BDF(0,0,0), PCI_PICR2, &reg32);
     reg32 |= PICR2_CF_SNOOP_WS(3) |
 	     PICR2_CF_FLUSH_L2 |
@@ -122,7 +115,6 @@ void pci_init_board(void)
 	     PICR1_CF_LOOP_SNOOP |
 	     PICR1_CF_APARK;
     pci_write_config_dword (PCI_BDF(0,0,0), PCI_PICR1, reg32);
-    puts("DBG: host bridge config done\n");
 }
 
 #endif /* CONFIG_PCI */
