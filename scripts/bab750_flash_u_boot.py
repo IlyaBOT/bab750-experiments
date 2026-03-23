@@ -50,6 +50,14 @@ BOOTROM_VXWORKS_PROMPT_RE = re.compile(r"\[VxWorks Boot\]:", re.IGNORECASE)
 BOOTROM_AUTOSTART_RE = re.compile(r"auto-booting\.\.\.", re.IGNORECASE)
 LOADING_RE = re.compile(r"\bLoading\b", re.IGNORECASE)
 TFTP_SIZE_RE = re.compile(r"Bytes transferred = \d+ \(([0-9a-fA-F]+) hex\)")
+FLASH_SECTOR_BOUNDARY_ERROR_RE = re.compile(
+    r"Error:\s*end address not on sector boundary",
+    re.IGNORECASE,
+)
+FLASH_NOT_ERASED_RE = re.compile(
+    r"Copy to Flash\.\.\.\s*Flash not Erased",
+    re.IGNORECASE,
+)
 BLUE = "\033[94m"
 ORANGE = "\033[38;5;208m"
 RED = "\033[91m"
@@ -715,6 +723,39 @@ def parse_tftp_size_hex(command_output: str, fallback_size: int) -> str:
     return format(fallback_size, "x")
 
 
+def flash_output_has_sector_boundary_error(command_output: str) -> bool:
+    return FLASH_SECTOR_BOUNDARY_ERROR_RE.search(command_output) is not None
+
+
+def flash_output_has_not_erased_error(command_output: str) -> bool:
+    return FLASH_NOT_ERASED_RE.search(command_output) is not None
+
+
+def validate_flash_programming(
+    protect_output: str,
+    erase_output: str,
+    copy_output: str,
+) -> None:
+    sector_boundary_error = (
+        flash_output_has_sector_boundary_error(protect_output)
+        or flash_output_has_sector_boundary_error(erase_output)
+    )
+    flash_not_erased = flash_output_has_not_erased_error(copy_output)
+
+    if sector_boundary_error:
+        error("Flash address range error: end address is not on a sector boundary.")
+
+    if flash_not_erased:
+        if sector_boundary_error:
+            error("Flash write failed: target flash was not erased.")
+        else:
+            error("Flash write failed: Copy to Flash reported 'Flash not Erased'.")
+        raise SystemExit(1)
+
+    if sector_boundary_error:
+        raise SystemExit(1)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build BAB-750 U-Boot, copy it to TFTP, then flash it over ttyUSB0."
@@ -762,8 +803,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--flash-end",
-        default="ff92ffff",
-        help="flash end address (default: ff92ffff)",
+        default="ff9fffff",
+        help="flash end address (default: ff9fffff)",
     )
     parser.add_argument(
         "--go-address",
@@ -886,21 +927,22 @@ def main() -> int:
                     max(args.prompt_timeout, 120.0),
                 )
                 size_hex = parse_tftp_size_hex(tftp_output, artifact.stat().st_size)
-                run_uboot_command(
+                protect_output = run_uboot_command(
                     console,
                     f"protect off {args.flash_start} {args.flash_end}",
                     args.prompt_timeout,
                 )
-                run_uboot_command(
+                erase_output = run_uboot_command(
                     console,
                     f"erase {args.flash_start} {args.flash_end}",
                     max(args.prompt_timeout, 180.0),
                 )
-                run_uboot_command(
+                copy_output = run_uboot_command(
                     console,
                     f"cp.b {args.load_address} {args.flash_start} {size_hex}",
                     max(args.prompt_timeout, 120.0),
                 )
+                validate_flash_programming(protect_output, erase_output, copy_output)
                 break
             except ResetDetected as exc:
                 warn("Machine was rebooted before the script finished, restarting from the beginning.")
