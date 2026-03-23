@@ -9,6 +9,7 @@ import os
 import pathlib
 import re
 import select
+import shlex
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,8 @@ VXWORKS_BANNER_RE = re.compile(
     r"CPU:\s*ELTEC BAB-PPC",
     re.IGNORECASE,
 )
+NVRAM_INVALID_RE = re.compile(r"Invalid revision info copy in nvram\s*!", re.IGNORECASE)
+NVRAM_PRESS_KEY_RE = re.compile(r"Press key:", re.IGNORECASE)
 PROMPT_RE = re.compile(r"=>\s")
 UBOOT_BANNER_RE = re.compile(r"\bU-Boot\b", re.IGNORECASE)
 UBOOT_AUTOBOOT_RE = re.compile(
@@ -47,17 +50,25 @@ BOOTROM_VXWORKS_PROMPT_RE = re.compile(r"\[VxWorks Boot\]:", re.IGNORECASE)
 BOOTROM_AUTOSTART_RE = re.compile(r"auto-booting\.\.\.", re.IGNORECASE)
 LOADING_RE = re.compile(r"\bLoading\b", re.IGNORECASE)
 TFTP_SIZE_RE = re.compile(r"Bytes transferred = \d+ \(([0-9a-fA-F]+) hex\)")
-YELLOW = "\033[33m"
+BLUE = "\033[94m"
+ORANGE = "\033[38;5;208m"
+RED = "\033[91m"
 RESET = "\033[0m"
 SERIAL_LINE_OPEN = False
 
 
-def emit_script_message(message: str) -> None:
+class ResetDetected(RuntimeError):
+    def __init__(self, position: int) -> None:
+        super().__init__("Machine reset detected")
+        self.position = position
+
+
+def emit_script_message(message: str, *, color: str | None = BLUE) -> None:
     global SERIAL_LINE_OPEN
 
     payload = message.rstrip("\n")
     prefix = "\n" if SERIAL_LINE_OPEN else ""
-    color_prefix = YELLOW if sys.stderr.isatty() else ""
+    color_prefix = color if color and sys.stderr.isatty() else ""
     color_suffix = RESET if color_prefix else ""
 
     sys.stdout.flush()
@@ -70,11 +81,31 @@ def emit_script_message(message: str) -> None:
 
 def log(message: str) -> None:
     timestamp = time.strftime("%H:%M:%S")
-    emit_script_message(f"[{timestamp}] {message}")
+    emit_script_message(f"[{timestamp}] {message}", color=BLUE)
 
 
 def warn(message: str) -> None:
-    emit_script_message(f"[WARN] {message}")
+    emit_script_message(f"[WARN] {message}", color=ORANGE)
+
+
+def error(message: str) -> None:
+    emit_script_message(f"[ERROR] {message}", color=RED)
+
+
+def find_reset_marker(console: "SerialConsole", start: int) -> int | None:
+    haystack = console.buffer_since(start)
+    match = RESET_MARKER_RE.search(haystack)
+    if not match:
+        return None
+    return start + match.start()
+
+
+def raise_if_reset(console: "SerialConsole", start: int | None) -> None:
+    if start is None:
+        return
+    reset_position = find_reset_marker(console, start)
+    if reset_position is not None:
+        raise ResetDetected(reset_position)
 
 
 def positive_float(value: str) -> float:
@@ -154,9 +185,59 @@ def run_command(cmd: list[str], cwd: pathlib.Path, env: dict[str, str]) -> None:
     subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
-def build_u_boot(cross_compile: str, jobs: int) -> pathlib.Path:
+def collect_toolchain_runtime_lib_dirs(toolchain_root: pathlib.Path) -> list[pathlib.Path]:
+    runtime_lib_dirs = [toolchain_root / "lib"]
+    runtime_lib_dirs.extend(sorted(toolchain_root.glob("*/powerpc-linux-gnu/lib")))
+    return [path for path in runtime_lib_dirs if path.exists()]
+
+
+def prepare_wrapped_cross_prefix(cross_compile: str) -> str:
+    tool_prefix = pathlib.Path(cross_compile)
+    toolchain_bin = tool_prefix.parent
+    toolchain_root = toolchain_bin.parent
+    runtime_lib_dirs = collect_toolchain_runtime_lib_dirs(toolchain_root)
+    wrapper_dir = pathlib.Path("/tmp") / f"{tool_prefix.name}wrappers"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+
+    for real_tool in toolchain_bin.glob(f"{tool_prefix.name}*"):
+        if not (real_tool.is_file() or real_tool.is_symlink()):
+            continue
+
+        wrapper_path = wrapper_dir / real_tool.name
+        exports = []
+        if runtime_lib_dirs:
+            lib_path = ":".join(str(path) for path in runtime_lib_dirs)
+            exports.append(
+                f"export LD_LIBRARY_PATH={shlex.quote(lib_path)}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}"
+            )
+        if real_tool.name.startswith(f"{tool_prefix.name}gcc"):
+            exports.append(
+                f"export COMPILER_PATH={shlex.quote(str(toolchain_bin))}${{COMPILER_PATH:+:$COMPILER_PATH}}"
+            )
+
+        script = [
+            "#!/bin/sh",
+            *exports,
+            f"exec {shlex.quote(str(real_tool))} \"$@\"",
+            "",
+        ]
+        wrapper_path.write_text("\n".join(script), encoding="utf-8")
+        wrapper_path.chmod(0o755)
+
+    return str(wrapper_dir / tool_prefix.name)
+
+
+def build_toolchain_env(cross_compile: str) -> tuple[dict[str, str], str]:
     env = os.environ.copy()
-    env["CROSS_COMPILE"] = cross_compile
+    wrapped_prefix = prepare_wrapped_cross_prefix(cross_compile)
+    env["CROSS_COMPILE"] = wrapped_prefix
+    return env, wrapped_prefix
+
+
+def build_u_boot(cross_compile: str, jobs: int) -> pathlib.Path:
+    env, wrapped_prefix = build_toolchain_env(cross_compile)
+    if wrapped_prefix != cross_compile:
+        log(f"Using wrapped cross-compiler prefix: {wrapped_prefix}")
 
     run_command(["make", "distclean"], cwd=UBOOT_DIR, env=env)
     run_command(["make", "BAB7xx_config"], cwd=UBOOT_DIR, env=env)
@@ -179,16 +260,16 @@ def copy_to_tftp(source: pathlib.Path) -> pathlib.Path:
 
 
 class SerialConsole:
-    def __init__(self, port: pathlib.Path, baudrate: int) -> None:
+    def __init__(self, port: pathlib.Path, baudrate: int, display_name: str | None = None) -> None:
         self.port = port
         self.baudrate = baudrate
+        self.display_name = display_name or port.name
         self.fd: int | None = None
         self._buffer = ""
         self._original_attrs = None
 
     def __enter__(self) -> "SerialConsole":
-        self.fd = os.open(self.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-        self._configure_port()
+        self._open_port()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -222,6 +303,18 @@ class SerialConsole:
         attrs[5] = speed
         termios.tcsetattr(self.fd, termios.TCSANOW, attrs)
         termios.tcflush(self.fd, termios.TCIOFLUSH)
+
+    def _open_port(self) -> None:
+        self.fd = os.open(self.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        self._configure_port()
+
+    def reconnect(self) -> None:
+        if self.fd is not None:
+            if self._original_attrs is not None:
+                termios.tcsetattr(self.fd, termios.TCSANOW, self._original_attrs)
+            os.close(self.fd)
+            self.fd = None
+        self._open_port()
 
     def mark(self) -> int:
         return len(self._buffer)
@@ -301,12 +394,22 @@ class SerialConsole:
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"Timed out while waiting for {description}")
 
-    def wait_for_quiet(self, quiet_period: float, timeout: float, *, description: str) -> None:
+    def wait_for_quiet(
+        self,
+        quiet_period: float,
+        timeout: float,
+        *,
+        description: str,
+        reset_watch_start: int | None = None,
+    ) -> None:
         deadline = time.monotonic() + timeout
         last_rx = time.monotonic()
         saw_data = True
+        if reset_watch_start is None:
+            reset_watch_start = self.mark()
 
         while True:
+            raise_if_reset(self, reset_watch_start)
             chunk = self.read_once(0.2)
             if chunk:
                 saw_data = True
@@ -318,7 +421,7 @@ class SerialConsole:
                 raise TimeoutError(f"Timed out while waiting for {description}")
 
 
-def wait_for_reset_marker(console: SerialConsole, timeout: float) -> None:
+def wait_for_reset_marker(console: SerialConsole, timeout: float) -> int:
     emit_script_message(
         "Press RESET on the board now.\n"
         "The script is waiting for reboot markers on the serial output:"
@@ -328,26 +431,37 @@ def wait_for_reset_marker(console: SerialConsole, timeout: float) -> None:
     deadline = time.monotonic() + timeout
 
     while True:
-        if RESET_MARKER_RE.search(console.buffer_since(start)):
+        reset_position = find_reset_marker(console, start)
+        if reset_position is not None:
             log("Reset marker detected")
-            return
+            return reset_position
         if time.monotonic() >= deadline:
             raise TimeoutError("Timed out while waiting for reset markers")
         console.read_once(0.2)
 
 
-def wait_for_bootrom_loading(console: SerialConsole, args: argparse.Namespace) -> None:
+def wait_for_bootrom_loading(
+    console: SerialConsole,
+    args: argparse.Namespace,
+    *,
+    start: int | None = None,
+) -> None:
     log("Waiting for boot ROM output after RESET")
     deadline = time.monotonic() + args.bootrom_timeout
-    start = console.mark()
+    start = console.mark() if start is None else start
+    reset_watch_start: int | None = None
+    last_rx = time.monotonic()
     next_enter = None
     memory_test_seen = False
     vxworks_banner_seen = False
+    nvram_invalid_seen = False
+    nvram_handled = False
     enter_spam_started = False
     load_requested = False
     warned_autostart = False
 
     while True:
+        raise_if_reset(console, reset_watch_start)
         haystack = console.buffer_since(start)
 
         if LOADING_RE.search(haystack):
@@ -357,10 +471,27 @@ def wait_for_bootrom_loading(console: SerialConsole, args: argparse.Namespace) -
         if not memory_test_seen and MEMORY_TEST_RE.search(haystack):
             memory_test_seen = True
             log("Memory-test prompt detected")
+            if reset_watch_start is None:
+                reset_watch_start = console.mark()
+
+        if not nvram_invalid_seen and NVRAM_INVALID_RE.search(haystack):
+            nvram_invalid_seen = True
+            warn(
+                "Invalid revision info is stored in NVRAM. "
+                "Copying the current revision info to NVRAM."
+            )
+            if reset_watch_start is None:
+                reset_watch_start = console.mark()
+
+        if nvram_invalid_seen and not nvram_handled and NVRAM_PRESS_KEY_RE.search(haystack):
+            nvram_handled = True
+            console.send_line("C")
 
         if not vxworks_banner_seen and VXWORKS_BANNER_RE.search(haystack):
             vxworks_banner_seen = True
             log("VxWorks banner detected")
+            if reset_watch_start is None:
+                reset_watch_start = console.mark()
 
         if not enter_spam_started and memory_test_seen and vxworks_banner_seen:
             enter_spam_started = True
@@ -385,13 +516,25 @@ def wait_for_bootrom_loading(console: SerialConsole, args: argparse.Namespace) -
         if time.monotonic() >= deadline:
             raise TimeoutError("Timed out while waiting for VxWorks prompt or Loading")
 
-        console.read_once(0.2)
+        chunk = console.read_once(0.2)
+        if chunk:
+            last_rx = time.monotonic()
+        elif (
+            memory_test_seen
+            and not vxworks_banner_seen
+            and not load_requested
+            and time.monotonic() - last_rx >= args.memory_test_halt_timeout
+        ):
+            error(f"Connection halted! Attempting to reconnect to {console.display_name}...")
+            console.reconnect()
+            last_rx = time.monotonic()
 
     log("Waiting for Loading to finish")
     console.wait_for_quiet(
         args.loading_quiet_period,
         args.loading_timeout,
         description="Loading to go quiet",
+        reset_watch_start=reset_watch_start,
     )
 
 
@@ -399,13 +542,39 @@ def wait_for_u_boot_prompt(console: SerialConsole, args: argparse.Namespace) -> 
     log("Waiting for U-Boot to start")
     deadline = time.monotonic() + args.uboot_timeout
     start = console.mark()
+    # RAM-started U-Boot prints the same ELTEC startup banner as a real reset.
+    # Ignore those markers in this phase to avoid false restart detection.
+    reset_watch_start = None
     banner_logged = False
     autoboot_attempted = False
+    nvram_invalid_seen = False
+    nvram_handled = False
+    ignore_next_prompt = False
 
     while True:
+        raise_if_reset(console, reset_watch_start)
         haystack = console.buffer_since(start)
 
+        if not nvram_invalid_seen and NVRAM_INVALID_RE.search(haystack):
+            nvram_invalid_seen = True
+            warn(
+                "Invalid revision info is stored in NVRAM. "
+                "Copying the current revision info to NVRAM."
+            )
+
+        if nvram_invalid_seen and not nvram_handled and NVRAM_PRESS_KEY_RE.search(haystack):
+            nvram_handled = True
+            ignore_next_prompt = True
+            console.send_line("C")
+            start = console.mark()
+            continue
+
         if PROMPT_RE.search(haystack):
+            if ignore_next_prompt:
+                log("Ignoring temporary prompt after revision-info copy")
+                ignore_next_prompt = False
+                start = console.mark()
+                continue
             return
 
         if UBOOT_TFTP_AUTORUN_RE.search(haystack):
@@ -440,11 +609,19 @@ def wait_for_prompt_with_spam(
     *,
     send_fn,
     tftp_escape: bool = False,
+    reset_watch_start: int | None = None,
 ) -> bool:
+    if reset_watch_start is None:
+        watch_resets = False
+    else:
+        watch_resets = True
+
     for attempt in range(attempts):
         send_fn(log_send=(attempt == 0))
         step_deadline = time.monotonic() + interval
         while True:
+            if watch_resets:
+                raise_if_reset(console, reset_watch_start)
             haystack = console.buffer_since(start)
             if PROMPT_RE.search(haystack):
                 return True
@@ -458,6 +635,7 @@ def wait_for_prompt_with_spam(
 
 def stop_uboot_autoboot(console: SerialConsole, args: argparse.Namespace, start: int) -> bool:
     log("U-Boot autoboot window detected, sending <Enter>")
+    reset_watch_start = console.mark()
 
     if wait_for_prompt_with_spam(
         console,
@@ -466,6 +644,7 @@ def stop_uboot_autoboot(console: SerialConsole, args: argparse.Namespace, start:
         args.uboot_enter_interval,
         send_fn=console.send_enter,
         tftp_escape=True,
+        reset_watch_start=reset_watch_start,
     ):
         return True
 
@@ -477,12 +656,14 @@ def stop_uboot_autoboot(console: SerialConsole, args: argparse.Namespace, start:
         args.uboot_enter_interval,
         send_fn=console.send_enter,
         tftp_escape=True,
+        reset_watch_start=reset_watch_start,
     )
 
 
 def interrupt_uboot_tftp_boot(console: SerialConsole, args: argparse.Namespace, start: int) -> bool:
     warn("Failed to stop the U-Boot autoboot process!")
     warn("Trying to interrupt the tftp boot process...")
+    reset_watch_start = console.mark()
 
     return wait_for_prompt_with_spam(
         console,
@@ -490,6 +671,7 @@ def interrupt_uboot_tftp_boot(console: SerialConsole, args: argparse.Namespace, 
         args.uboot_ctrl_c_attempts,
         args.uboot_ctrl_c_interval,
         send_fn=console.send_ctrl_c,
+        reset_watch_start=reset_watch_start,
     )
 
 
@@ -499,14 +681,30 @@ def run_uboot_command(
     timeout: float,
 ) -> str:
     start = console.mark()
+    reset_watch_start = console.mark()
     console.send_line(command)
-    _, text = console.wait_for_any(
-        {"prompt": PROMPT_RE},
-        timeout,
-        start=start,
-        description=f"prompt after '{command}'",
-    )
-    return text
+    deadline = time.monotonic() + timeout
+
+    while True:
+        raise_if_reset(console, reset_watch_start)
+        haystack = console.buffer_since(start)
+        if PROMPT_RE.search(haystack):
+            return haystack
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Timed out while waiting for prompt after '{command}'")
+        console.read_once(0.2)
+
+
+def sleep_with_reset_watch(console: SerialConsole, delay: float) -> None:
+    deadline = time.monotonic() + delay
+    reset_watch_start = console.mark()
+
+    while True:
+        raise_if_reset(console, reset_watch_start)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        console.read_once(min(0.2, remaining))
 
 
 def parse_tftp_size_hex(command_output: str, fallback_size: int) -> str:
@@ -615,6 +813,12 @@ def parse_args() -> argparse.Namespace:
         help="interval between repeated <Enter> presses while stopping boot ROM autostart (default: 0.5)",
     )
     parser.add_argument(
+        "--memory-test-halt-timeout",
+        type=positive_float,
+        default=5.0,
+        help="seconds without serial output during memory test before reconnecting the port (default: 5)",
+    )
+    parser.add_argument(
         "--uboot-enter-interval",
         type=positive_float,
         default=0.2,
@@ -645,48 +849,62 @@ def main() -> int:
     args = parse_args()
     cross_compile = resolve_cross_compile(args.cross_compile)
     serial_port = resolve_serial_port(args.serial_port)
+    serial_display_name = pathlib.Path(args.serial_port).name if os.sep in args.serial_port else args.serial_port
 
     log(f"Using cross-compiler prefix: {cross_compile}")
     artifact = build_u_boot(cross_compile, args.jobs)
     copy_to_tftp(artifact)
 
     log("Make sure the TFTP container/server is already running before continuing")
-    with SerialConsole(serial_port, args.baudrate) as console:
+    with SerialConsole(serial_port, args.baudrate, display_name=serial_display_name) as console:
         log(f"Connected to {serial_port} at {args.baudrate} baud")
-        wait_for_reset_marker(console, args.bootrom_timeout)
+        restart_from: int | None = None
 
-        wait_for_bootrom_loading(console, args)
+        while True:
+            try:
+                if restart_from is None:
+                    cycle_start = wait_for_reset_marker(console, args.bootrom_timeout)
+                else:
+                    log("Reset marker detected")
+                    cycle_start = restart_from
+                    restart_from = None
 
-        log(f"Waiting {args.post_loading_delay:.1f}s before starting U-Boot from RAM")
-        time.sleep(args.post_loading_delay)
-        console.send_line(f"g {args.go_address}")
+                wait_for_bootrom_loading(console, args, start=cycle_start)
 
-        wait_for_u_boot_prompt(console, args)
-        log("U-Boot prompt acquired, starting flash commands")
+                log(f"Waiting {args.post_loading_delay:.1f}s before starting U-Boot from RAM")
+                sleep_with_reset_watch(console, args.post_loading_delay)
+                console.send_line(f"g {args.go_address}")
 
-        run_uboot_command(console, f"setenv serverip {args.serverip}", args.prompt_timeout)
-        run_uboot_command(console, f"setenv ipaddr {args.ipaddr}", args.prompt_timeout)
-        tftp_output = run_uboot_command(
-            console,
-            f"tftpboot {args.load_address} u-boot.bin",
-            max(args.prompt_timeout, 120.0),
-        )
-        size_hex = parse_tftp_size_hex(tftp_output, artifact.stat().st_size)
-        run_uboot_command(
-            console,
-            f"protect off {args.flash_start} {args.flash_end}",
-            args.prompt_timeout,
-        )
-        run_uboot_command(
-            console,
-            f"erase {args.flash_start} {args.flash_end}",
-            max(args.prompt_timeout, 180.0),
-        )
-        run_uboot_command(
-            console,
-            f"cp.b {args.load_address} {args.flash_start} {size_hex}",
-            max(args.prompt_timeout, 120.0),
-        )
+                wait_for_u_boot_prompt(console, args)
+                log("U-Boot prompt acquired, starting flash commands")
+
+                run_uboot_command(console, f"setenv serverip {args.serverip}", args.prompt_timeout)
+                run_uboot_command(console, f"setenv ipaddr {args.ipaddr}", args.prompt_timeout)
+                tftp_output = run_uboot_command(
+                    console,
+                    f"tftpboot {args.load_address} u-boot.bin",
+                    max(args.prompt_timeout, 120.0),
+                )
+                size_hex = parse_tftp_size_hex(tftp_output, artifact.stat().st_size)
+                run_uboot_command(
+                    console,
+                    f"protect off {args.flash_start} {args.flash_end}",
+                    args.prompt_timeout,
+                )
+                run_uboot_command(
+                    console,
+                    f"erase {args.flash_start} {args.flash_end}",
+                    max(args.prompt_timeout, 180.0),
+                )
+                run_uboot_command(
+                    console,
+                    f"cp.b {args.load_address} {args.flash_start} {size_hex}",
+                    max(args.prompt_timeout, 120.0),
+                )
+                break
+            except ResetDetected as exc:
+                warn("Machine was rebooted before the script finished, restarting from the beginning.")
+                restart_from = exc.position
 
     log("Flash programming finished")
     emit_script_message("Switch the memory addressing mode, then reboot the machine.")
@@ -696,9 +914,15 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except subprocess.CalledProcessError as exc:
+        error(f"Command failed with exit code {exc.returncode}: {' '.join(exc.cmd)}")
+        raise SystemExit(1)
     except TimeoutError as exc:
-        emit_script_message(f"[ERROR] {exc}")
+        error(str(exc))
         raise SystemExit(1)
     except KeyboardInterrupt:
         emit_script_message("Interrupted.")
         raise SystemExit(130)
+    except Exception as exc:
+        error(f"Unexpected error: {exc}")
+        raise SystemExit(1)
