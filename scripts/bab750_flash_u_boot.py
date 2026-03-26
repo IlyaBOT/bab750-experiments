@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import pathlib
 import re
 import select
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import termios
@@ -63,6 +65,10 @@ ORANGE = "\033[38;5;208m"
 RED = "\033[91m"
 RESET = "\033[0m"
 SERIAL_LINE_OPEN = False
+MODEM_LINE_BITS = {
+    "rts": termios.TIOCM_RTS,
+    "dtr": termios.TIOCM_DTR,
+}
 
 
 class ResetDetected(RuntimeError):
@@ -268,10 +274,20 @@ def copy_to_tftp(source: pathlib.Path) -> pathlib.Path:
 
 
 class SerialConsole:
-    def __init__(self, port: pathlib.Path, baudrate: int, display_name: str | None = None) -> None:
+    def __init__(
+        self,
+        port: pathlib.Path,
+        baudrate: int,
+        display_name: str | None = None,
+        *,
+        reset_line: str | None = None,
+        reset_active_state: bool = True,
+    ) -> None:
         self.port = port
         self.baudrate = baudrate
         self.display_name = display_name or port.name
+        self.reset_line = reset_line
+        self.reset_active_state = reset_active_state
         self.fd: int | None = None
         self._buffer = ""
         self._original_attrs = None
@@ -283,6 +299,8 @@ class SerialConsole:
     def __exit__(self, exc_type, exc, tb) -> None:
         if self.fd is None:
             return
+        if self.reset_line is not None:
+            self.set_reset_asserted(False)
         if self._original_attrs is not None:
             termios.tcsetattr(self.fd, termios.TCSANOW, self._original_attrs)
         os.close(self.fd)
@@ -314,10 +332,16 @@ class SerialConsole:
 
     def _open_port(self) -> None:
         self.fd = os.open(self.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        if self.reset_line is not None:
+            self.set_reset_asserted(False)
         self._configure_port()
+        if self.reset_line is not None:
+            self.set_reset_asserted(False)
 
     def reconnect(self) -> None:
         if self.fd is not None:
+            if self.reset_line is not None:
+                self.set_reset_asserted(False)
             if self._original_attrs is not None:
                 termios.tcsetattr(self.fd, termios.TCSANOW, self._original_attrs)
             os.close(self.fd)
@@ -342,6 +366,38 @@ class SerialConsole:
             self._buffer = self._buffer[-131072:]
         print(chunk, end="", flush=True)
         SERIAL_LINE_OPEN = not chunk.endswith(("\n", "\r"))
+
+    def _set_modem_line(self, line_name: str, active: bool) -> None:
+        assert self.fd is not None
+        bit = MODEM_LINE_BITS[line_name]
+        operation = termios.TIOCMBIS if active else termios.TIOCMBIC
+        try:
+            fcntl.ioctl(self.fd, operation, struct.pack("I", bit))
+        except OSError:
+            state = struct.unpack("I", fcntl.ioctl(self.fd, termios.TIOCMGET, struct.pack("I", 0)))[0]
+            if active:
+                state |= bit
+            else:
+                state &= ~bit
+            fcntl.ioctl(self.fd, termios.TIOCMSET, struct.pack("I", state))
+
+    def set_reset_asserted(self, asserted: bool) -> None:
+        if self.reset_line is None:
+            return
+        physical_active = self.reset_active_state if asserted else not self.reset_active_state
+        self._set_modem_line(self.reset_line, physical_active)
+
+    def pulse_reset(self, duration: float, settle_delay: float) -> None:
+        if self.reset_line is None:
+            return
+        log(
+            f"Pulsing reset via {self.reset_line.upper()} "
+            f"for {duration:.3f}s (active state: {'asserted' if self.reset_active_state else 'deasserted'})"
+        )
+        self.set_reset_asserted(True)
+        time.sleep(duration)
+        self.set_reset_asserted(False)
+        time.sleep(settle_delay)
 
     def read_once(self, timeout: float) -> str:
         assert self.fd is not None
@@ -430,10 +486,13 @@ class SerialConsole:
 
 
 def wait_for_reset_marker(console: SerialConsole, timeout: float) -> int:
-    emit_script_message(
-        "Press RESET on the board now.\n"
-        "The script is waiting for reboot markers on the serial output:"
-    )
+    if console.reset_line is None:
+        emit_script_message(
+            "Press RESET on the board now.\n"
+            "The script is waiting for reboot markers on the serial output:"
+        )
+    else:
+        emit_script_message("Waiting for reboot markers on the serial output:")
 
     start = console.mark()
     deadline = time.monotonic() + timeout
@@ -776,6 +835,37 @@ def parse_args() -> argparse.Namespace:
         help="cross-compiler prefix, e.g. /opt/powerpc-linux-gnu/bin/powerpc-linux-gnu-",
     )
     parser.add_argument(
+        "--reset-line",
+        choices=sorted(MODEM_LINE_BITS),
+        help="optional modem-control line to pulse for RESET (rts or dtr)",
+    )
+    parser.add_argument(
+        "--reset-line-active-state",
+        choices=("asserted", "deasserted"),
+        default="asserted",
+        help=(
+            "whether the chosen modem line should be in the asserted or deasserted state "
+            "while the board RESET pin is held active (default: asserted)"
+        ),
+    )
+    parser.add_argument(
+        "--auto-reset",
+        action="store_true",
+        help="pulse the configured reset line before waiting for boot markers",
+    )
+    parser.add_argument(
+        "--reset-pulse",
+        type=positive_float,
+        default=0.25,
+        help="seconds to hold RESET active when --auto-reset is used (default: 0.25)",
+    )
+    parser.add_argument(
+        "--reset-settle-delay",
+        type=positive_float,
+        default=0.5,
+        help="seconds to wait after releasing RESET (default: 0.5)",
+    )
+    parser.add_argument(
         "--jobs",
         type=positive_int,
         default=os.cpu_count() or 1,
@@ -888,22 +978,39 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.auto_reset and not args.reset_line:
+        raise SystemExit("--auto-reset requires --reset-line")
+
     cross_compile = resolve_cross_compile(args.cross_compile)
     serial_port = resolve_serial_port(args.serial_port)
     serial_display_name = pathlib.Path(args.serial_port).name if os.sep in args.serial_port else args.serial_port
+    reset_active_state = args.reset_line_active_state == "asserted"
 
     log(f"Using cross-compiler prefix: {cross_compile}")
     artifact = build_u_boot(cross_compile, args.jobs)
     copy_to_tftp(artifact)
 
     log("Make sure the TFTP container/server is already running before continuing")
-    with SerialConsole(serial_port, args.baudrate, display_name=serial_display_name) as console:
+    with SerialConsole(
+        serial_port,
+        args.baudrate,
+        display_name=serial_display_name,
+        reset_line=args.reset_line,
+        reset_active_state=reset_active_state,
+    ) as console:
         log(f"Connected to {serial_port} at {args.baudrate} baud")
+        if args.reset_line is not None:
+            log(
+                f"{args.reset_line.upper()} reset control enabled "
+                f"({args.reset_line_active_state} line state asserts RESET)"
+            )
         restart_from: int | None = None
 
         while True:
             try:
                 if restart_from is None:
+                    if args.auto_reset:
+                        console.pulse_reset(args.reset_pulse, args.reset_settle_delay)
                     cycle_start = wait_for_reset_marker(console, args.bootrom_timeout)
                 else:
                     log("Reset marker detected")
