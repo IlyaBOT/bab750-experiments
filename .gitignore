@@ -6,6 +6,12 @@ bab750-tftp/tftpboot/*.uImage
 bab750-tftp/tftpboot/*.uInitrd
 bab750-tftp/tftpboot/*.cuImage
 bab750-tftp/tftpboot/750nfs.img
+bab750-tftp/tftpboot/750nfs-prep-seg1.bin
 bab750-tftp/nfsroot/
 bab750-tftp/vendor-2.4-build/
 bab750-tftp/uboot-netboot.txt
+bab750-tftp/*.log
+bab750-tftp/uboot-netboot-vendor-2.4-*.txt
+!bab750-tftp/uboot-netboot-vendor-2.4-prep.txt
+vendor-downloads/
+vendor-src/

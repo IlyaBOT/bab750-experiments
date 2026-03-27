@@ -27,11 +27,14 @@ RESET_MARKER_RE = re.compile(
 PROMPT_RE = re.compile(r"=>\s")
 UBOOT_BANNER_RE = re.compile(r"\bU-Boot\b", re.IGNORECASE)
 UBOOT_AUTOBOOT_RE = re.compile(
-    r"(?:Hit any key to stop autoboot|Press\s+'Enter'\s+or\s+'Space'\s+to stop autoboot):\s*\d+",
+    r"(?:Hit any key to stop autoboot|Press\s+'Enter'\s+or\s+'Space'\s+to stop autoboot)",
     re.IGNORECASE,
 )
 UBOOT_TFTP_AUTORUN_RE = re.compile(
-    r"Filename\s+'[^']+'\.\s*|Load address:\s*0x[0-9a-fA-F]+",
+    r"BOOTP broadcast\s+\d+|"
+    r"TFTP from server\s+[0-9.]+|"
+    r"Filename\s+'[^']+'\.\s*|"
+    r"Load address:\s*0x[0-9a-fA-F]+",
     re.IGNORECASE,
 )
 NVRAM_INVALID_RE = re.compile(r"Invalid revision info copy in nvram\s*!", re.IGNORECASE)
@@ -48,7 +51,12 @@ LINUX_BOOT_RE = re.compile(
     re.IGNORECASE,
 )
 LINUX_SUCCESS_RE = re.compile(
-    r"Run /sbin/init|INIT:|login:\s*$|Welcome to Ad[eé]lie",
+    r"BAB750 PPC mininit is alive\.|"
+    r"BAB750 vendor Linux 2\.4 userspace is up\.|"
+    r"Type 'help' for commands\.|"
+    r"(?:^|[\r\n])bab750>\s|"
+    r"(?:^|[\r\n])login:\s*$|"
+    r"Welcome to Ad[eé]lie",
     re.IGNORECASE | re.MULTILINE,
 )
 KERNEL_FAILURE_RE = re.compile(
@@ -313,7 +321,10 @@ class SerialConsole:
         ready, _, _ = select.select([self.fd], [], [], timeout)
         if not ready:
             return ""
-        chunk = os.read(self.fd, 4096)
+        try:
+            chunk = os.read(self.fd, 4096)
+        except BlockingIOError:
+            return ""
         if not chunk:
             return ""
         decoded = chunk.decode("utf-8", errors="replace")

@@ -1,178 +1,55 @@
 #!/usr/bin/env python3
 
-"""Prepare a vendor-style Linux 2.4 multi-image for the ELTEC BAB-750."""
+"""Build the working vendor Linux 2.4 PReP netboot image for the ELTEC BAB-750."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
+import re
 import shutil
 import subprocess
 import textwrap
-import urllib.request
 
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
-DEFAULT_KERNEL = pathlib.Path("/tmp/linux-2.4.18-eltec-1.0.19-2/vmlinux")
-DEFAULT_OBJCOPY = pathlib.Path("/tmp/linux-bab750-build/.toolwrap/powerpc-linux-gnu-objcopy")
+DEFAULT_KERNEL_DIR = ROOT_DIR / "vendor-src" / "linux-2.4.18-eltec-1.0.19-2"
+DEFAULT_TOOL_PREFIX = ROOT_DIR / "vendor-src" / "toolwrap" / "ppc_60x"
 DEFAULT_MKIMAGE = ROOT_DIR / "u-boot-lab" / "tools" / "mkimage"
 DEFAULT_TFTP_DIR = ROOT_DIR / "bab750-tftp" / "tftpboot"
 DEFAULT_BUILD_DIR = ROOT_DIR / "bab750-tftp" / "vendor-2.4-build"
-DEFAULT_COMMANDS = ROOT_DIR / "bab750-tftp" / "uboot-netboot-vendor-2.4.txt"
-BUSYBOX_URL = (
-    "https://archive.debian.org/debian/pool/main/b/busybox/"
-    "busybox-static_0.60.5-2.2_powerpc.deb"
-)
-
-ROOTFS_LINUXRC = textwrap.dedent(
-    """\
-    #!/bin/sh
-    PATH=/bin:/sbin
-    mount -t proc proc /proc
-    mount -t devfs devfs /dev 2>/dev/null
-    clear 2>/dev/null
-
-    echo "BAB750 Linux 2.4 vendor ramfs"
-    echo
-    uname -a
-    if [ -r /proc/cpuinfo ]; then
-      echo
-      echo "--- /proc/cpuinfo ---"
-      cat /proc/cpuinfo
-    fi
-    if [ -r /proc/pci ]; then
-      echo
-      echo "--- /proc/pci ---"
-      cat /proc/pci
-    fi
-    if [ -r /proc/interrupts ]; then
-      echo
-      echo "--- /proc/interrupts ---"
-      cat /proc/interrupts
-    fi
-    echo
-    echo "Serial shell is ready. Type commands or exit to continue into /sbin/init."
-    exec /bin/sh
-    """
-)
-
-ROOTFS_INITTAB = textwrap.dedent(
-    """\
-    ::sysinit:/etc/rc.sysinit
-    ::respawn:/bin/sh
-    ::ctrlaltdel:/sbin/reboot
-    ::shutdown:/bin/umount -a -r
-    """
-)
-
-ROOTFS_RCSYSINIT = textwrap.dedent(
-    """\
-    #!/bin/sh
-    PATH=/bin:/sbin
-    mount -t proc proc /proc
-    mount -t devfs devfs /dev 2>/dev/null
-
-    echo
-    echo "BAB750 vendor Linux 2.4 userspace is up."
-    echo "Useful checks: cat /proc/pci ; cat /proc/interrupts ; ifconfig -a ; dmesg"
-    echo
-    """
-)
+DEFAULT_COMMANDS = ROOT_DIR / "bab750-tftp" / "uboot-netboot-vendor-2.4-prep.txt"
+DEFAULT_IMAGE_NAME = "750nfs-prep.uImage"
+DEFAULT_LOADADDR = "1800000"
 
 COMMANDS_TEMPLATE = textwrap.dedent(
     """\
-    # Vendor Linux 2.4 / ELinOS-style ramfs boot for the ELTEC BAB-750
-    setenv bootargs
+    # Vendor Linux 2.4 PReP zImage.initrd wrapper for the ELTEC BAB-750
+    setenv bootargs root=ramfs console=ttyS0,9600
     setenv serverip {serverip}
     setenv ipaddr {ipaddr}
     setenv netmask {netmask}
-    tftpboot {loadaddr} 750nfs.img
+    tftpboot {loadaddr} {image_name}
     bootm {loadaddr}
     """
 )
 
 
-def run(cmd: list[str], *, cwd: pathlib.Path | None = None) -> None:
+def run(cmd: list[str], *, cwd: pathlib.Path | None = None, env: dict[str, str] | None = None) -> None:
     print("+", " ".join(str(part) for part in cmd))
-    subprocess.run(cmd, cwd=cwd, check=True)
+    subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
-def write_text(path: pathlib.Path, content: str, mode: int | None = None) -> None:
+def write_text(path: pathlib.Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-    if mode is not None:
-        path.chmod(mode)
 
 
-def download_busybox(download_dir: pathlib.Path) -> pathlib.Path:
-    download_dir.mkdir(parents=True, exist_ok=True)
-    deb_path = download_dir / pathlib.Path(BUSYBOX_URL).name
-    if not deb_path.exists():
-        print(f"Downloading {BUSYBOX_URL}")
-        with urllib.request.urlopen(BUSYBOX_URL) as response:
-            deb_path.write_bytes(response.read())
-    return deb_path
-
-
-def extract_busybox(deb_path: pathlib.Path, work_dir: pathlib.Path) -> pathlib.Path:
-    extract_dir = work_dir / "busybox-extract"
-    shutil.rmtree(extract_dir, ignore_errors=True)
-    extract_dir.mkdir(parents=True)
-    run(
-        [
-            "bash",
-            "-lc",
-            f"ar p {deb_path} data.tar.gz | tar -xzf - -C {extract_dir} ./bin/busybox",
-        ]
-    )
-    busybox = extract_dir / "bin" / "busybox"
-    if not busybox.exists():
-        raise SystemExit(f"BusyBox extraction failed: {busybox} not found")
-    busybox.chmod(0o755)
-    return busybox
-
-
-def stage_rootfs(rootfs_dir: pathlib.Path, busybox: pathlib.Path) -> None:
+def stage_minimal_rootfs(rootfs_dir: pathlib.Path) -> None:
     shutil.rmtree(rootfs_dir, ignore_errors=True)
-    for subdir in ("bin", "sbin", "etc", "proc", "dev", "tmp", "root", "mnt"):
+    for subdir in ("bin", "dev", "etc", "mnt", "proc", "root", "sbin", "tmp"):
         (rootfs_dir / subdir).mkdir(parents=True, exist_ok=True)
-
-    shutil.copy2(busybox, rootfs_dir / "bin" / "busybox")
-    (rootfs_dir / "bin" / "busybox").chmod(0o755)
-
-    for applet in (
-        "sh",
-        "mount",
-        "umount",
-        "echo",
-        "cat",
-        "ls",
-        "dmesg",
-        "uname",
-        "ps",
-        "ifconfig",
-        "route",
-        "reboot",
-        "halt",
-        "init",
-        "sleep",
-    ):
-        target = rootfs_dir / "bin" / applet
-        target.unlink(missing_ok=True)
-        target.symlink_to("/bin/busybox")
-
-    for symlink in ("init", "ifconfig", "reboot"):
-        target = rootfs_dir / "sbin" / symlink
-        target.unlink(missing_ok=True)
-        target.symlink_to("/bin/busybox")
-
-    write_text(rootfs_dir / "linuxrc", ROOTFS_LINUXRC, mode=0o755)
-    write_text(rootfs_dir / "etc" / "inittab", ROOTFS_INITTAB)
-    write_text(rootfs_dir / "etc" / "rc.sysinit", ROOTFS_RCSYSINIT, mode=0o755)
-    write_text(rootfs_dir / "etc" / "fstab", "proc /proc proc defaults 0 0\nnone /dev devfs defaults 0 0\n")
-    write_text(rootfs_dir / "etc" / "passwd", "root::0:0:root:/root:/bin/sh\n")
-    write_text(rootfs_dir / "etc" / "group", "root:x:0:\n")
-    write_text(rootfs_dir / "etc" / "hosts", "127.0.0.1 localhost\n")
 
 
 def make_rootfs_tarball(rootfs_dir: pathlib.Path, tarball: pathlib.Path) -> None:
@@ -186,38 +63,66 @@ def make_rootfs_tarball(rootfs_dir: pathlib.Path, tarball: pathlib.Path) -> None
         mknod -m 666 dev/null c 1 3
         mknod -m 666 dev/ttyS0 c 4 64
         mknod -m 666 dev/tty0 c 4 0
-        tar --numeric-owner --owner=0 --group=0 -czf "$2" .
+        tar --format=ustar --sort=name --mtime='@0' \
+            --numeric-owner --owner=0 --group=0 \
+            -czf "$2" .
         """
     )
     run(["fakeroot", "--", "bash", "-lc", script, "_", str(rootfs_dir), str(tarball)])
 
 
-def build_multi_image(
-    kernel: pathlib.Path,
-    objcopy: pathlib.Path,
-    mkimage: pathlib.Path,
+def build_vendor_prep_wrapper(
+    kernel_dir: pathlib.Path,
     build_dir: pathlib.Path,
+    tool_prefix: pathlib.Path,
+    mkimage: pathlib.Path,
     tftp_dir: pathlib.Path,
+    image_name: str,
+    *,
+    elinos_prefix: str,
+    elinos_project: str,
 ) -> pathlib.Path:
-    build_dir.mkdir(parents=True, exist_ok=True)
-    tftp_dir.mkdir(parents=True, exist_ok=True)
+    tarball = build_dir / "750nfs-rootfs.tgz"
+    ramdisk_image = kernel_dir / "arch" / "ppc" / "boot" / "images" / "ramdisk.image.gz"
+    prep_elf = kernel_dir / "arch" / "ppc" / "boot" / "images" / "zImage.initrd.elf"
+    segment_path = tftp_dir / "750nfs-prep-seg1.bin"
+    image_path = tftp_dir / image_name
 
-    rootfs_tar = build_dir / "750nfs-rootfs.tgz"
-    kernel_bin = build_dir / "vmlinux.bin"
-    kernel_gz = build_dir / "vmlinux.bin.gz"
-    image_path = tftp_dir / "750nfs.img"
+    shutil.copy2(tarball, ramdisk_image)
 
-    if not kernel.exists():
-        raise SystemExit(f"Kernel image not found: {kernel}")
-    if not objcopy.exists():
-        raise SystemExit(f"Cross objcopy not found: {objcopy}")
-    if not mkimage.exists():
-        raise SystemExit(f"mkimage not found: {mkimage}")
+    env = dict(os.environ)
+    env.update(
+        {
+            "ELINOS_PREFIX": elinos_prefix,
+            "ELINOS_PROJECT": elinos_project,
+            "ELINOS_BIN_PREFIX": str(tool_prefix),
+            "LINUX_ARCH": "ppc",
+        }
+    )
+    run(["make", "-C", str(kernel_dir), "-j4", "zImage.initrd"], env=env)
 
-    run([str(objcopy), "-O", "binary", str(kernel), str(kernel_bin)])
-    if kernel_gz.exists():
-        kernel_gz.unlink()
-    run(["gzip", "-9f", str(kernel_bin)])
+    readelf = tool_prefix.with_name(tool_prefix.name + "-readelf")
+    if not readelf.exists():
+        raise SystemExit(f"readelf wrapper not found: {readelf}")
+
+    headers = subprocess.check_output([str(readelf), "-l", str(prep_elf)], text=True)
+    match = re.search(
+        r"LOAD\s+0x([0-9a-fA-F]+)\s+0x00800000\s+0x00800000\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)",
+        headers,
+    )
+    if not match:
+        raise SystemExit(f"Could not locate the PReP LOAD segment in {prep_elf}")
+
+    offset = int(match.group(1), 16)
+    filesz = int(match.group(2), 16)
+    memsz = int(match.group(3), 16)
+
+    with prep_elf.open("rb") as src, segment_path.open("wb") as dst:
+        src.seek(offset)
+        dst.write(src.read(filesz))
+    with segment_path.open("ab") as dst:
+        dst.truncate(memsz)
+
     run(
         [
             str(mkimage),
@@ -226,25 +131,24 @@ def build_multi_image(
             "-O",
             "linux",
             "-T",
-            "multi",
+            "kernel",
             "-C",
-            "gzip",
+            "none",
             "-a",
-            "0",
+            "0x00800000",
             "-e",
-            "0",
+            "0x00800000",
             "-n",
-            "BAB750 Linux 2.4 multi",
+            "BAB750 Linux 2.4 prep wrapper",
             "-d",
-            f"{kernel_gz}:{rootfs_tar}",
+            str(segment_path),
             str(image_path),
         ]
     )
-    run([str(mkimage), "-l", str(image_path)])
     return image_path
 
 
-def write_commands(path: pathlib.Path, *, serverip: str, ipaddr: str, netmask: str, loadaddr: str) -> None:
+def write_commands(path: pathlib.Path, *, serverip: str, ipaddr: str, netmask: str, loadaddr: str, image_name: str) -> None:
     write_text(
         path,
         COMMANDS_TEMPLATE.format(
@@ -252,50 +156,73 @@ def write_commands(path: pathlib.Path, *, serverip: str, ipaddr: str, netmask: s
             ipaddr=ipaddr,
             netmask=netmask,
             loadaddr=loadaddr,
+            image_name=image_name,
         ),
     )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--kernel", default=str(DEFAULT_KERNEL), help=f"path to the linked vendor vmlinux (default: {DEFAULT_KERNEL})")
-    parser.add_argument("--objcopy", default=str(DEFAULT_OBJCOPY), help=f"path to the working PowerPC objcopy wrapper (default: {DEFAULT_OBJCOPY})")
+    parser.add_argument("--kernel-dir", default=str(DEFAULT_KERNEL_DIR), help=f"vendor kernel tree (default: {DEFAULT_KERNEL_DIR})")
+    parser.add_argument("--tool-prefix", default=str(DEFAULT_TOOL_PREFIX), help=f"PowerPC tool wrapper prefix without the trailing tool name (default: {DEFAULT_TOOL_PREFIX})")
     parser.add_argument("--mkimage", default=str(DEFAULT_MKIMAGE), help=f"path to mkimage (default: {DEFAULT_MKIMAGE})")
     parser.add_argument("--tftp-dir", default=str(DEFAULT_TFTP_DIR), help=f"TFTP output directory (default: {DEFAULT_TFTP_DIR})")
     parser.add_argument("--build-dir", default=str(DEFAULT_BUILD_DIR), help=f"working build directory (default: {DEFAULT_BUILD_DIR})")
     parser.add_argument("--commands-file", default=str(DEFAULT_COMMANDS), help=f"output path for the U-Boot commands file (default: {DEFAULT_COMMANDS})")
+    parser.add_argument("--image-name", default=DEFAULT_IMAGE_NAME, help=f"name of the generated TFTP image (default: {DEFAULT_IMAGE_NAME})")
     parser.add_argument("--serverip", default="192.168.1.101", help="server IP to write into the U-Boot commands file")
     parser.add_argument("--ipaddr", default="192.168.1.123", help="board IP to write into the U-Boot commands file")
     parser.add_argument("--netmask", default="255.255.255.0", help="netmask to write into the U-Boot commands file")
-    parser.add_argument("--loadaddr", default="1000000", help="U-Boot TFTP load address to write into the commands file")
+    parser.add_argument("--loadaddr", default=DEFAULT_LOADADDR, help=f"U-Boot TFTP load address (default: {DEFAULT_LOADADDR})")
+    parser.add_argument("--elinos-prefix", default="/opt/elinos", help="ELinOS installation prefix for the vendor kernel build")
+    parser.add_argument(
+        "--elinos-project",
+        default=str(DEFAULT_BUILD_DIR / "elinos-project"),
+        help="ELINOS_PROJECT path to export during the vendor kernel build",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
 
-    kernel = pathlib.Path(args.kernel).expanduser().resolve()
-    objcopy = pathlib.Path(args.objcopy).expanduser()
+    kernel_dir = pathlib.Path(args.kernel_dir).expanduser().resolve()
+    tool_prefix = pathlib.Path(args.tool_prefix).expanduser().resolve()
     mkimage = pathlib.Path(args.mkimage).expanduser().resolve()
     tftp_dir = pathlib.Path(args.tftp_dir).expanduser().resolve()
     build_dir = pathlib.Path(args.build_dir).expanduser().resolve()
     commands_file = pathlib.Path(args.commands_file).expanduser().resolve()
 
-    busybox_deb = download_busybox(build_dir / "downloads")
-    busybox = extract_busybox(busybox_deb, build_dir)
+    if not kernel_dir.exists():
+        raise SystemExit(f"Kernel tree not found: {kernel_dir}")
+    if not mkimage.exists():
+        raise SystemExit(f"mkimage not found: {mkimage}")
 
-    rootfs_dir = build_dir / "rootfs"
-    rootfs_tar = build_dir / "750nfs-rootfs.tgz"
+    tftp_dir.mkdir(parents=True, exist_ok=True)
+    build_dir.mkdir(parents=True, exist_ok=True)
 
-    stage_rootfs(rootfs_dir, busybox)
-    make_rootfs_tarball(rootfs_dir, rootfs_tar)
-    image_path = build_multi_image(kernel, objcopy, mkimage, build_dir, tftp_dir)
+    rootfs_dir = build_dir / "minroot"
+    tarball = build_dir / "750nfs-rootfs.tgz"
+
+    stage_minimal_rootfs(rootfs_dir)
+    make_rootfs_tarball(rootfs_dir, tarball)
+    image_path = build_vendor_prep_wrapper(
+        kernel_dir,
+        build_dir,
+        tool_prefix,
+        mkimage,
+        tftp_dir,
+        args.image_name,
+        elinos_prefix=args.elinos_prefix,
+        elinos_project=args.elinos_project,
+    )
     write_commands(
         commands_file,
         serverip=args.serverip,
         ipaddr=args.ipaddr,
         netmask=args.netmask,
         loadaddr=args.loadaddr,
+        image_name=args.image_name,
     )
 
     print()
