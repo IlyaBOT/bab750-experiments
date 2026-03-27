@@ -22,6 +22,8 @@ DEFAULT_BUILD_DIR = ROOT_DIR / "bab750-tftp" / "vendor-2.4-build"
 DEFAULT_COMMANDS = ROOT_DIR / "bab750-tftp" / "uboot-netboot-vendor-2.4-prep.txt"
 DEFAULT_IMAGE_NAME = "750nfs-prep.uImage"
 DEFAULT_LOADADDR = "1800000"
+DEFAULT_MININIT = ROOT_DIR / "vendor-src" / "mininit" / "ppc_mininit"
+DEFAULT_ROOTFS_SOURCE = DEFAULT_BUILD_DIR / "rootfs"
 
 COMMANDS_TEMPLATE = textwrap.dedent(
     """\
@@ -46,10 +48,97 @@ def write_text(path: pathlib.Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def stage_minimal_rootfs(rootfs_dir: pathlib.Path) -> None:
+def stage_rootfs(
+    rootfs_dir: pathlib.Path,
+    *,
+    source_rootfs: pathlib.Path,
+    mininit_binary: pathlib.Path,
+) -> None:
+    busybox_source_candidates = (
+        source_rootfs / "bin" / "busybox",
+        source_rootfs / "bin" / "sh",
+    )
+    static_copies = (
+        ("etc/passwd", "etc/passwd"),
+        ("etc/group", "etc/group"),
+        ("etc/hosts", "etc/hosts"),
+    )
+    busybox_applets = (
+        "sh",
+        "ash",
+        "bash",
+        "ls",
+        "cat",
+        "mount",
+        "ping",
+        "uname",
+        "dmesg",
+        "rm",
+        "touch",
+        "mkdir",
+        "pwd",
+        "echo",
+        "cp",
+        "mv",
+        "ifconfig",
+        "init",
+    )
+
     shutil.rmtree(rootfs_dir, ignore_errors=True)
-    for subdir in ("bin", "dev", "etc", "mnt", "proc", "root", "sbin", "tmp"):
+    for subdir in ("bin", "dev", "etc", "etc/init.d", "mnt", "proc", "root", "sbin", "tmp"):
         (rootfs_dir / subdir).mkdir(parents=True, exist_ok=True)
+
+    if not mininit_binary.exists():
+        raise SystemExit(f"mininit binary not found: {mininit_binary}")
+
+    busybox_source = next((candidate for candidate in busybox_source_candidates if candidate.exists()), None)
+    if busybox_source is None:
+        raise SystemExit(
+            "BusyBox source binary not found. Looked for:\n"
+            + "\n".join(f"  - {candidate}" for candidate in busybox_source_candidates)
+        )
+
+    shutil.copy2(busybox_source, rootfs_dir / "bin" / "busybox")
+    os.chmod(rootfs_dir / "bin" / "busybox", 0o755)
+    shutil.copy2(mininit_binary, rootfs_dir / "bin" / "netprobe")
+    os.chmod(rootfs_dir / "bin" / "netprobe", 0o755)
+
+    for relative_src, relative_dst in static_copies:
+        src = source_rootfs / relative_src
+        dst = rootfs_dir / relative_dst
+        if not src.exists():
+            raise SystemExit(f"Required rootfs file not found: {src}")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        if os.access(src, os.X_OK):
+            os.chmod(dst, 0o755)
+
+    for applet in busybox_applets:
+        target_dir = rootfs_dir / ("sbin" if applet in {"ifconfig", "init"} else "bin")
+        os.symlink("busybox" if target_dir.name == "bin" else "../bin/busybox", target_dir / applet)
+
+    write_text(
+        rootfs_dir / "etc" / "profile",
+        "PATH=/bin:/sbin\nPS1='bab750# '\nexport PATH PS1 TERM=vt100 HOME=/\n",
+    )
+    write_text(
+        rootfs_dir / "etc" / "inittab",
+        "::sysinit:/etc/init.d/rcS\n"
+        "ttyS0::respawn:-/bin/sh\n"
+        "::restart:/sbin/init\n",
+    )
+    write_text(
+        rootfs_dir / "etc" / "init.d" / "rcS",
+        "#!/bin/sh\n"
+        "mount -t proc proc /proc >/dev/null 2>&1\n"
+        "echo 'BAB750 BusyBox init reached userspace.'\n"
+        "echo 'Common commands should now work: ls cat rm echo touch mkdir pwd cp mv uname dmesg'\n",
+    )
+    os.chmod(rootfs_dir / "etc" / "init.d" / "rcS", 0o755)
+    write_text(
+        rootfs_dir / "etc" / "motd",
+        "BAB750 BusyBox shell is alive.\nBasic commands like ls, cat, rm, echo, touch should work.\n",
+    )
 
 
 def make_rootfs_tarball(rootfs_dir: pathlib.Path, tarball: pathlib.Path) -> None:
@@ -170,6 +259,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--build-dir", default=str(DEFAULT_BUILD_DIR), help=f"working build directory (default: {DEFAULT_BUILD_DIR})")
     parser.add_argument("--commands-file", default=str(DEFAULT_COMMANDS), help=f"output path for the U-Boot commands file (default: {DEFAULT_COMMANDS})")
     parser.add_argument("--image-name", default=DEFAULT_IMAGE_NAME, help=f"name of the generated TFTP image (default: {DEFAULT_IMAGE_NAME})")
+    parser.add_argument("--mininit", default=str(DEFAULT_MININIT), help=f"path to the rescue-shell binary to stage as /bin/netprobe (default: {DEFAULT_MININIT})")
+    parser.add_argument(
+        "--rootfs-source",
+        default=str(DEFAULT_ROOTFS_SOURCE),
+        help=f"directory with prebuilt static PPC userland binaries to stage into the rescue rootfs (default: {DEFAULT_ROOTFS_SOURCE})",
+    )
     parser.add_argument("--serverip", default="192.168.1.101", help="server IP to write into the U-Boot commands file")
     parser.add_argument("--ipaddr", default="192.168.1.123", help="board IP to write into the U-Boot commands file")
     parser.add_argument("--netmask", default="255.255.255.0", help="netmask to write into the U-Boot commands file")
@@ -192,11 +287,17 @@ def main() -> int:
     tftp_dir = pathlib.Path(args.tftp_dir).expanduser().resolve()
     build_dir = pathlib.Path(args.build_dir).expanduser().resolve()
     commands_file = pathlib.Path(args.commands_file).expanduser().resolve()
+    mininit_binary = pathlib.Path(args.mininit).expanduser().resolve()
+    rootfs_source = pathlib.Path(args.rootfs_source).expanduser().resolve()
 
     if not kernel_dir.exists():
         raise SystemExit(f"Kernel tree not found: {kernel_dir}")
     if not mkimage.exists():
         raise SystemExit(f"mkimage not found: {mkimage}")
+    if not mininit_binary.exists():
+        raise SystemExit(f"mininit binary not found: {mininit_binary}")
+    if not rootfs_source.exists():
+        raise SystemExit(f"rootfs source directory not found: {rootfs_source}")
 
     tftp_dir.mkdir(parents=True, exist_ok=True)
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -204,7 +305,7 @@ def main() -> int:
     rootfs_dir = build_dir / "minroot"
     tarball = build_dir / "750nfs-rootfs.tgz"
 
-    stage_minimal_rootfs(rootfs_dir)
+    stage_rootfs(rootfs_dir, source_rootfs=rootfs_source, mininit_binary=mininit_binary)
     make_rootfs_tarball(rootfs_dir, tarball)
     image_path = build_vendor_prep_wrapper(
         kernel_dir,

@@ -52,9 +52,9 @@ LINUX_BOOT_RE = re.compile(
 )
 LINUX_SUCCESS_RE = re.compile(
     r"BAB750 PPC mininit is alive\.|"
+    r"BAB750 rescue shell ready|"
     r"BAB750 vendor Linux 2\.4 userspace is up\.|"
-    r"Type 'help' for commands\.|"
-    r"(?:^|[\r\n])bab750>\s|"
+    r"(?:^|[\r\n])bab750#\s|"
     r"(?:^|[\r\n])login:\s*$|"
     r"Welcome to Ad[eé]lie",
     re.IGNORECASE | re.MULTILINE,
@@ -345,6 +345,45 @@ class SerialConsole:
 
     def send_line(self, line: str) -> None:
         self.send_raw(line.encode("ascii") + b"\r", line)
+
+
+def attach_console(console: SerialConsole) -> None:
+    if console.fd is None:
+        return
+
+    stdin_fd = sys.stdin.fileno()
+    stdout_fd = sys.stdout.fileno()
+    stdin_is_tty = sys.stdin.isatty()
+    original_stdin_attrs = None
+
+    emit_script_message("Attached to the BAB750 console. Press Ctrl-] to disconnect.", color=BLUE)
+
+    try:
+        if stdin_is_tty:
+            original_stdin_attrs = termios.tcgetattr(stdin_fd)
+            tty_attrs = termios.tcgetattr(stdin_fd)
+            tty_attrs[3] &= ~(termios.ICANON | termios.ECHO)
+            tty_attrs[6][termios.VMIN] = 1
+            tty_attrs[6][termios.VTIME] = 0
+            termios.tcsetattr(stdin_fd, termios.TCSANOW, tty_attrs)
+
+        while True:
+            ready, _, _ = select.select([console.fd, stdin_fd], [], [])
+            if console.fd in ready:
+                chunk = os.read(console.fd, 4096)
+                if chunk:
+                    os.write(stdout_fd, chunk)
+            if stdin_fd in ready:
+                data = os.read(stdin_fd, 1024)
+                if not data:
+                    return
+                if b"\x1d" in data:
+                    emit_script_message("Detached from the BAB750 console.", color=BLUE)
+                    return
+                os.write(console.fd, data)
+    finally:
+        if original_stdin_attrs is not None:
+            termios.tcsetattr(stdin_fd, termios.TCSANOW, original_stdin_attrs)
 
 
 def wait_for_reset_marker(console: SerialConsole, timeout: float) -> int:
@@ -701,6 +740,11 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="maximum Ctrl+C attempts while interrupting TFTP autoboot (default: 10)",
     )
+    parser.add_argument(
+        "--attach",
+        action="store_true",
+        help="stay attached to the serial console after Linux reaches the prompt",
+    )
     return parser.parse_args()
 
 
@@ -769,6 +813,8 @@ def main() -> int:
                         )
 
                 monitor_linux_boot(console, args, commands[-1])
+                if args.attach:
+                    attach_console(console)
                 return 0
             except ResetDetected as exc:
                 warn("Machine was rebooted before Linux boot finished, restarting from the beginning.")
